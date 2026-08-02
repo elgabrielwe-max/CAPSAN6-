@@ -1,0 +1,12 @@
+import ExcelJS from 'exceljs';
+const C={navy:'17324D',teal:'1B7F79',white:'FFFFFF',ink:'203040',green:'4E9F6F'};
+export async function buildTrainingExcel(data,detail=[]){
+  const wb=new ExcelJS.Workbook();
+  wb.creator='CAPSAN6';wb.subject='Reporte ejecutivo de capacitación SSOMA';
+  const ws=wb.addWorksheet('DASHBOARD',{views:[{showGridLines:false}]});ws.columns=Array.from({length:8},()=>({width:20}));
+  ws.mergeCells('A1:H2');ws.getCell('A1').value='REPORTE EJECUTIVO DE CAPACITACIONES';ws.getCell('A1').font={size:22,bold:true,color:{argb:C.white}};ws.getCell('A1').fill={type:'pattern',pattern:'solid',fgColor:{argb:C.navy}};ws.getCell('A1').alignment={horizontal:'center',vertical:'middle'};
+  const k=data.kpis||{};[['TRABAJADORES',k.workers],['TEMAS',k.topics],['% NOTAS',`${k.gradeCompliance||0}%`],['% APROBACIÓN',`${k.approvalPercent||0}%`]].forEach(([t,v],i)=>{const c=1+i*2;ws.mergeCells(4,c,4,c+1);ws.mergeCells(5,c,6,c+1);ws.getCell(4,c).value=t;ws.getCell(4,c).font={bold:true,color:{argb:C.white}};ws.getCell(4,c).fill={type:'pattern',pattern:'solid',fgColor:{argb:i===3?C.green:C.teal}};ws.getCell(5,c).value=v;ws.getCell(5,c).font={bold:true,size:20,color:{argb:C.ink}};ws.getCell(5,c).alignment={horizontal:'center',vertical:'middle'};});
+  let r=9;ws.getCell(r,1).value='CUMPLIMIENTO POR ÁREA';ws.getCell(r,1).font={bold:true,size:14};r++;['Área','Programados','Evaluados','Aprobados','Promedio','% Cumplimiento','% Aprobación'].forEach((h,i)=>ws.getCell(r,i+1).value=h);ws.getRow(r).font={bold:true,color:{argb:C.white}};ws.getRow(r).fill={type:'pattern',pattern:'solid',fgColor:{argb:C.navy}};for(const x of data.byArea||[]){r++;[x.name,x.expected,x.graded,x.approved,x.average,x.compliance,x.approval].forEach((v,i)=>ws.getCell(r,i+1).value=v);}
+  const base=wb.addWorksheet('DETALLE');base.columns=[{header:'DNI',key:'dni',width:14},{header:'Trabajador',key:'worker',width:32},{header:'Unidad',key:'unit',width:24},{header:'Área',key:'area',width:24},{header:'Tema',key:'training',width:38},{header:'Nota',key:'score',width:12},{header:'Resultado',key:'result',width:16},{header:'Fecha',key:'date',width:18}];base.views=[{state:'frozen',ySplit:1}];base.getRow(1).font={bold:true,color:{argb:C.white}};base.getRow(1).fill={type:'pattern',pattern:'solid',fgColor:{argb:C.teal}};detail.forEach(x=>base.addRow(x));base.autoFilter={from:'A1',to:'H1'};
+  return wb.xlsx.writeBuffer();
+}
