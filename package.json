@@ -1,6 +1,6 @@
 {
   "name": "capsan6-ssoma-suite",
-  "version": "4.0.1",
+  "version": "4.0.3",
   "private": true,
   "type": "module",
   "scripts": {

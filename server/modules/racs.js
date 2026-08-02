@@ -148,7 +148,7 @@ racsRouter.post('/import',requireCapability('rac:import'),upload.single('file'),
             reporter_name=$5,
             reporter_type=$6,
             location=$7,
-            report_date=$8,
+            report_date=$8::date,
             risk_level=$9,
             report_type=$10,
             deviation_type=$11,
@@ -160,8 +160,8 @@ racsRouter.post('/import',requireCapability('rac:import'),upload.single('file'),
             corrective_action=$17,
             status=$18,
             progress_percent=$19,
-            lifted_at=CASE WHEN $19>=100 THEN $8 ELSE NULL END,
-            due_date=$20,
+            lifted_at=CASE WHEN $19::int>=100 THEN $8::date ELSE NULL::date END,
+            due_date=$20::date,
             environmental_flag=$21,
             environmental_category=$22,
             environmental_confidence=$23,
@@ -192,8 +192,8 @@ racsRouter.post('/import',requireCapability('rac:import'),upload.single('file'),
             import_batch_id,created_by
           )
           VALUES(
-            $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
-            CASE WHEN $20>=100 THEN $9 ELSE NULL END,$21,$22,$23,$24,$25,$26,$27,$28,$29
+            $1,$2,$3,$4,$5,$6,$7,$8,$9::date,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20::int,
+            CASE WHEN $20::int>=100 THEN $9::date ELSE NULL::date END,$21::date,$22,$23,$24,$25,$26,$27,$28,$29
           )
           RETURNING id
         `,[

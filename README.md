@@ -1,4 +1,4 @@
-# CAPSAN6 4.0.0 · Sistema Integral de Gestión SSOMA
+# CAPSAN6 4.0.3 · Sistema Integral de Gestión SSOMA
 
 CAPSAN6 4.0.0 es una reconstrucción completa del sistema. La interfaz, la arquitectura del servidor y el modelo relacional fueron creados nuevamente para que todos los módulos trabajen sobre una sola fuente de datos.
 
