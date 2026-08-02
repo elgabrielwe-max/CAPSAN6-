@@ -510,7 +510,7 @@ export async function initSchema() {
     `ALTER TABLE flash_report_images ALTER COLUMN image_data DROP NOT NULL`,
   ]) { try { await q(sql); } catch (error) { if (error.code !== '42703') throw error; } }
 
-  await q(`INSERT INTO schema_migrations(version) VALUES('4.0.1') ON CONFLICT DO NOTHING`);
+  await q(`INSERT INTO schema_migrations(version) VALUES('4.0.2') ON CONFLICT DO NOTHING`);
   await ensureMaster();
   await applyMasterRecovery();
 }

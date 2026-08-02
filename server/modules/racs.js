@@ -19,8 +19,15 @@ export const racsRouter=Router();
 racsRouter.use(authRequired);
 const clean=v=>String(v||'').trim().replace(/\s+/g,' ');
 const upper=v=>clean(v).toUpperCase();
+const normalizedName=v=>upper(v).normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+const asyncRoute=handler=>(req,res,next)=>Promise.resolve(handler(req,res,next)).catch(next);
 
-async function areaId(client,name){const n=upper(name)||'SIN ÁREA ASIGNADA';return (await client.query(`INSERT INTO areas(name) VALUES($1) ON CONFLICT(name) DO UPDATE SET active=TRUE RETURNING id`,[n])).rows[0].id;}
+async function areaId(client,name,businessUnitId=null){
+  const n=upper(name)||'SIN ÁREA ASIGNADA';
+  const id=(await client.query(`INSERT INTO areas(name) VALUES($1) ON CONFLICT(name) DO UPDATE SET active=TRUE RETURNING id`,[n])).rows[0].id;
+  if(businessUnitId)await client.query(`INSERT INTO business_unit_areas(business_unit_id,area_id) VALUES($1,$2) ON CONFLICT DO NOTHING`,[Number(businessUnitId),id]);
+  return id;
+}
 async function unit(client,id){const r=await client.query(`SELECT * FROM business_units WHERE id=$1 AND active=TRUE`,[Number(id)]);return r.rows[0];}
 function dueDate(date,risk){const days=risk==='ALTO'?1:risk==='MEDIO'?3:7;const d=new Date(`${date}T12:00:00Z`);d.setUTCDate(d.getUTCDate()+days);return d.toISOString().slice(0,10);}
 function supervisorClause(user,alias='r'){
@@ -60,7 +67,7 @@ racsRouter.post('/',requireCapability('rac:create'),async(req,res)=>{
   const description=upper(b.description);if(!description)return res.status(400).json({error:'Descripción requerida'});
   const ai=b.useAi===false?null:await classifyRac(description);const reportDate=b.reportDate||new Date().toISOString().slice(0,10);const risk=upper(b.riskLevel)||'BAJO';
   const row=await tx(async client=>{
-    const reporting=await areaId(client,b.reportingArea);const reported=await areaId(client,b.reportedArea||b.reportingArea);const bu=await unit(client,unitId);if(!bu)throw Object.assign(new Error('Unidad no encontrada'),{status:404});
+    const reporting=await areaId(client,b.reportingArea,unitId);const reported=await areaId(client,b.reportedArea||b.reportingArea,unitId);const bu=await unit(client,unitId);if(!bu)throw Object.assign(new Error('Unidad no encontrada'),{status:404});
     const prefix=bu.code||'RAC';const sequence=Number((await client.query(`SELECT COUNT(*)::int total FROM racs WHERE business_unit_id=$1 AND report_date=$2`,[unitId,reportDate])).rows[0].total)+1;const code=`${prefix}-${reportDate.replaceAll('-','')}-${String(sequence).padStart(4,'0')}-${crypto.randomBytes(2).toString('hex').toUpperCase()}`;
     const result=await client.query(`INSERT INTO racs(report_code,source_report_number,business_unit_id,reporting_area_id,reported_area_id,reporter_name,reporter_type,location,report_date,risk_level,report_type,deviation_type,cause_category,cause_subtype,description,supervisor_user_id,supervisor_name_text,corrective_action,status,progress_percent,due_date,environmental_flag,environmental_category,environmental_confidence,created_by)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,'PENDIENTE',0,$19,$20,$21,$22,$23) RETURNING *`,[
@@ -71,26 +78,161 @@ racsRouter.post('/',requireCapability('rac:create'),async(req,res)=>{
   await audit(req,'CREATE_RAC','RAC',row.id,{code:row.report_code});if(row.supervisor_user_id&&row.supervisor_user_id!==req.user.id)await notify(row.supervisor_user_id,'Nuevo RAC asignado',`${row.report_code} requiere atención`,'WARN','RAC',row.id);res.json(row);
 });
 
-racsRouter.post('/import/analyze',requireCapability('rac:import'),upload.single('file'),async(req,res)=>{
-  if(!req.file)return res.status(400).json({error:'Selecciona un Excel'});const bu=await unit(pool,req.body.businessUnitId);if(!bu)return res.status(400).json({error:'Selecciona una unidad'});if(!assertUnitAccess(req.user,bu.id))return res.status(403).json({error:'Unidad fuera de tu alcance'});
-  const analysis=analyzeRacWorkbook(req.file.buffer,req.file.originalname,{businessUnitName:bu.name,unitCode:bu.code});res.json({...analysis,records:analysis.records.slice(0,50)});
-});
-
-racsRouter.post('/import',requireCapability('rac:import'),upload.single('file'),async(req,res)=>{
-  if(!req.file)return res.status(400).json({error:'Selecciona un Excel'});const bu=await unit(pool,req.body.businessUnitId);if(!bu)return res.status(400).json({error:'Selecciona una unidad'});if(!assertUnitAccess(req.user,bu.id))return res.status(403).json({error:'Unidad fuera de tu alcance'});
+racsRouter.post('/import/analyze',requireCapability('rac:import'),upload.single('file'),asyncRoute(async(req,res)=>{
+  if(!req.file)return res.status(400).json({error:'Selecciona un Excel'});
+  const bu=await unit(pool,req.body.businessUnitId);
+  if(!bu)return res.status(400).json({error:'Selecciona una unidad'});
+  if(!assertUnitAccess(req.user,bu.id))return res.status(403).json({error:'Unidad fuera de tu alcance'});
   const analysis=analyzeRacWorkbook(req.file.buffer,req.file.originalname,{businessUnitName:bu.name,unitCode:bu.code});
+  res.json({...analysis,records:analysis.records.slice(0,50)});
+}));
+
+racsRouter.post('/import',requireCapability('rac:import'),upload.single('file'),asyncRoute(async(req,res)=>{
+  if(!req.file)return res.status(400).json({error:'Selecciona un Excel'});
+  const bu=await unit(pool,req.body.businessUnitId);
+  if(!bu)return res.status(400).json({error:'Selecciona una unidad'});
+  if(!assertUnitAccess(req.user,bu.id))return res.status(403).json({error:'Unidad fuera de tu alcance'});
+
+  const analysis=analyzeRacWorkbook(req.file.buffer,req.file.originalname,{businessUnitName:bu.name,unitCode:bu.code});
+  if(!analysis.validRows)return res.status(400).json({error:'El archivo no contiene RACS válidos para importar',details:analysis.errors.slice(0,20)});
+
   const summary=await tx(async client=>{
-    const batch=(await client.query(`INSERT INTO rac_import_batches(original_name,source_file,business_unit_id,imported_by,created_by,detected_period,rows_received,total_rows,rows_valid,rows_rejected,error_rows,status,summary) VALUES($1,$1,$2,$3,$3,$4,$5,$5,$6,$7,$7,'COMPLETADO',$8::jsonb) RETURNING id`,[req.file.originalname,bu.id,req.user.id,analysis.dominantPeriod,analysis.totalRows,analysis.validRows,analysis.errors.length,JSON.stringify({periods:analysis.periods,warnings:analysis.warnings})])).rows[0];
+    const batch=(await client.query(`
+      INSERT INTO rac_import_batches(
+        original_name,source_file,business_unit_id,imported_by,created_by,
+        detected_period,rows_received,total_rows,rows_valid,rows_rejected,
+        error_rows,status,summary
+      )
+      VALUES($1,$1,$2,$3,$3,$4,$5,$5,$6,$7,$7,'PROCESANDO',$8::jsonb)
+      RETURNING id
+    `,[
+      req.file.originalname,bu.id,req.user.id,analysis.dominantPeriod,
+      analysis.totalRows,analysis.validRows,analysis.errors.length,
+      JSON.stringify({periods:analysis.periods,warnings:analysis.warnings})
+    ])).rows[0];
+
+    const supervisorRows=(await client.query(`
+      SELECT DISTINCT u.id,u.name
+      FROM users u
+      JOIN user_business_units ubu ON ubu.user_id=u.id
+      WHERE u.role='SUPERVISOR'
+        AND u.active=TRUE
+        AND u.deleted_at IS NULL
+        AND ubu.business_unit_id=$1
+    `,[bu.id])).rows;
+    const supervisors=new Map(supervisorRows.map(row=>[normalizedName(row.name),row]));
+    const areaCache=new Map();
+    const resolveArea=async name=>{
+      const key=normalizedName(name)||'SIN AREA ASIGNADA';
+      if(areaCache.has(key))return areaCache.get(key);
+      const id=await areaId(client,name,bu.id);
+      areaCache.set(key,id);
+      return id;
+    };
+
     let inserted=0,updated=0;
     for(const r of analysis.records){
-      const reporting=await areaId(client,r.reportingArea),reported=await areaId(client,r.reportedArea);const existing=(await client.query(`SELECT id FROM racs WHERE report_code=$1`,[r.internalCode])).rows[0];
-      if(existing){await client.query(`UPDATE racs SET source_report_number=$1,business_unit_id=$2,reporting_area_id=$3,reported_area_id=$4,reporter_name=$5,reporter_type=$6,location=$7,report_date=$8,risk_level=$9,report_type=$10,deviation_type=$11,cause_category=$12,cause_subtype=$13,description=$14,supervisor_name_text=$15,corrective_action=$16,status=$17,progress_percent=$18,lifted_at=CASE WHEN $18>=100 THEN $8 ELSE NULL END,due_date=$19,environmental_flag=$20,environmental_category=$21,environmental_confidence=$22,source_file=$23,source_sheet=$24,source_row=$25,import_batch_id=$26,updated_at=NOW() WHERE id=$27`,[r.sourceReportNumber,bu.id,reporting,reported,r.reporterName,r.reporterType,r.location,r.reportDate,r.riskLevel,r.reportType,r.deviationType,r.causeCategory,r.causeSubtype,r.description,r.supervisorName||null,r.correctiveAction||null,r.status,r.progressPercent,dueDate(r.reportDate,r.riskLevel),r.environmentalFlag,r.environmentalCategory,r.environmentalConfidence,r.sourceFile,r.sourceSheet,r.sourceRow,batch.id,existing.id]);updated++;}
-      else{await client.query(`INSERT INTO racs(report_code,source_report_number,business_unit_id,reporting_area_id,reported_area_id,reporter_name,reporter_type,location,report_date,risk_level,report_type,deviation_type,cause_category,cause_subtype,description,supervisor_name_text,corrective_action,status,progress_percent,lifted_at,due_date,environmental_flag,environmental_category,environmental_confidence,source_file,source_sheet,source_row,import_batch_id,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,CASE WHEN $19>=100 THEN $9 ELSE NULL END,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29)`,[r.internalCode,r.sourceReportNumber,bu.id,reporting,reported,r.reporterName,r.reporterType,r.location,r.reportDate,r.riskLevel,r.reportType,r.deviationType,r.causeCategory,r.causeSubtype,r.description,r.supervisorName||null,r.correctiveAction||null,r.status,r.progressPercent,dueDate(r.reportDate,r.riskLevel),r.environmentalFlag,r.environmentalCategory,r.environmentalConfidence,r.sourceFile,r.sourceSheet,r.sourceRow,batch.id,req.user.id]);inserted++;}
+      const reporting=await resolveArea(r.reportingArea);
+      const reported=await resolveArea(r.reportedArea);
+      const matchedSupervisor=supervisors.get(normalizedName(r.supervisorName))||null;
+      const existing=(await client.query(`SELECT id FROM racs WHERE report_code=$1`,[r.internalCode])).rows[0];
+      let racId;
+
+      if(existing){
+        racId=(await client.query(`
+          UPDATE racs SET
+            source_report_number=$1,
+            business_unit_id=$2,
+            reporting_area_id=$3,
+            reported_area_id=$4,
+            reporter_name=$5,
+            reporter_type=$6,
+            location=$7,
+            report_date=$8,
+            risk_level=$9,
+            report_type=$10,
+            deviation_type=$11,
+            cause_category=$12,
+            cause_subtype=$13,
+            description=$14,
+            supervisor_user_id=COALESCE($15,supervisor_user_id),
+            supervisor_name_text=$16,
+            corrective_action=$17,
+            status=$18,
+            progress_percent=$19,
+            lifted_at=CASE WHEN $19>=100 THEN $8 ELSE NULL END,
+            due_date=$20,
+            environmental_flag=$21,
+            environmental_category=$22,
+            environmental_confidence=$23,
+            source_file=$24,
+            source_sheet=$25,
+            source_row=$26,
+            import_batch_id=$27,
+            updated_at=NOW()
+          WHERE id=$28
+          RETURNING id
+        `,[
+          r.sourceReportNumber,bu.id,reporting,reported,r.reporterName,r.reporterType,
+          r.location,r.reportDate,r.riskLevel,r.reportType,r.deviationType,r.causeCategory,
+          r.causeSubtype,r.description,matchedSupervisor?.id||null,r.supervisorName||null,
+          r.correctiveAction||null,r.status,r.progressPercent,dueDate(r.reportDate,r.riskLevel),
+          r.environmentalFlag,r.environmentalCategory,r.environmentalConfidence,r.sourceFile,
+          r.sourceSheet,r.sourceRow,batch.id,existing.id
+        ])).rows[0].id;
+        updated++;
+      }else{
+        racId=(await client.query(`
+          INSERT INTO racs(
+            report_code,source_report_number,business_unit_id,reporting_area_id,reported_area_id,
+            reporter_name,reporter_type,location,report_date,risk_level,report_type,deviation_type,
+            cause_category,cause_subtype,description,supervisor_user_id,supervisor_name_text,
+            corrective_action,status,progress_percent,lifted_at,due_date,environmental_flag,
+            environmental_category,environmental_confidence,source_file,source_sheet,source_row,
+            import_batch_id,created_by
+          )
+          VALUES(
+            $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
+            CASE WHEN $20>=100 THEN $9 ELSE NULL END,$21,$22,$23,$24,$25,$26,$27,$28,$29
+          )
+          RETURNING id
+        `,[
+          r.internalCode,r.sourceReportNumber,bu.id,reporting,reported,r.reporterName,r.reporterType,
+          r.location,r.reportDate,r.riskLevel,r.reportType,r.deviationType,r.causeCategory,
+          r.causeSubtype,r.description,matchedSupervisor?.id||null,r.supervisorName||null,
+          r.correctiveAction||null,r.status,r.progressPercent,dueDate(r.reportDate,r.riskLevel),
+          r.environmentalFlag,r.environmentalCategory,r.environmentalConfidence,r.sourceFile,
+          r.sourceSheet,r.sourceRow,batch.id,req.user.id
+        ])).rows[0].id;
+        inserted++;
+      }
+
+      if(matchedSupervisor){
+        await client.query(`UPDATE rac_assignments SET active=FALSE WHERE rac_id=$1 AND supervisor_user_id<>$2 AND active=TRUE`,[racId,matchedSupervisor.id]);
+        await client.query(`INSERT INTO rac_assignments(rac_id,supervisor_user_id,assigned_by,active) VALUES($1,$2,$3,TRUE) ON CONFLICT DO NOTHING`,[racId,matchedSupervisor.id,req.user.id]);
+      }
     }
-    await client.query(`UPDATE rac_import_batches SET rows_inserted=$1,inserted_rows=$1,rows_updated=$2,updated_rows=$2 WHERE id=$3`,[inserted,updated,batch.id]);return{batchId:batch.id,inserted,updated,rejected:analysis.errors.length,period:analysis.dominantPeriod,warnings:analysis.warnings};
+
+    const verified=Number((await client.query(`SELECT COUNT(*)::int total FROM racs WHERE import_batch_id=$1`,[batch.id])).rows[0].total);
+    if(verified!==inserted+updated)throw Object.assign(new Error(`La verificación central esperaba ${inserted+updated} RACS y encontró ${verified}`),{status:500});
+
+    await client.query(`
+      UPDATE rac_import_batches
+      SET rows_inserted=$1,inserted_rows=$1,rows_updated=$2,updated_rows=$2,status='COMPLETADO'
+      WHERE id=$3
+    `,[inserted,updated,batch.id]);
+
+    const centralTotal=Number((await client.query(`SELECT COUNT(*)::int total FROM racs WHERE business_unit_id=$1`,[bu.id])).rows[0].total);
+    const periodTotal=analysis.dominantPeriod?Number((await client.query(`SELECT COUNT(*)::int total FROM racs WHERE business_unit_id=$1 AND TO_CHAR(report_date,'YYYY-MM')=$2`,[bu.id,analysis.dominantPeriod])).rows[0].total):centralTotal;
+    return{
+      batchId:batch.id,inserted,updated,verified,centralTotal,periodTotal,
+      rejected:analysis.errors.length,period:analysis.dominantPeriod,warnings:analysis.warnings
+    };
   });
-  await audit(req,'IMPORT_RACS','RAC_IMPORT',summary.batchId,summary);res.json(summary);
-});
+
+  await audit(req,'IMPORT_RACS','RAC_IMPORT',summary.batchId,summary);
+  res.json(summary);
+}));
 
 racsRouter.post('/:id/assign',requireCapability('rac:assign'),async(req,res)=>{
   const racId=Number(req.params.id),supervisorId=Number(req.body.supervisorUserId);const rac=(await pool.query(`SELECT business_unit_id,report_code FROM racs WHERE id=$1`,[racId])).rows[0];if(!rac)return res.status(404).json({error:'RAC no encontrado'});if(!assertUnitAccess(req.user,rac.business_unit_id))return res.status(403).json({error:'Unidad fuera de tu alcance'});
