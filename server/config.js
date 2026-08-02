@@ -18,6 +18,7 @@ export const config = {
   masterUsername: process.env.MASTER_USERNAME || '75863247',
   masterInitialPassword: process.env.MASTER_INITIAL_PASSWORD || '',
   masterName: process.env.MASTER_NAME || 'Administrador Máster',
+  masterRecoveryPassword: process.env.MASTER_RECOVERY_PASSWORD || '',
   openAiKey: process.env.OPENAI_API_KEY || '',
   openAiModel: process.env.OPENAI_MODEL || 'gpt-4.1-mini',
   drive: {

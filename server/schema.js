@@ -1,4 +1,5 @@
 import bcrypt from 'bcryptjs';
+import { createHash } from 'node:crypto';
 import { pool, tx } from './db.js';
 import { config } from './config.js';
 
@@ -509,20 +510,58 @@ export async function initSchema() {
     `ALTER TABLE flash_report_images ALTER COLUMN image_data DROP NOT NULL`,
   ]) { try { await q(sql); } catch (error) { if (error.code !== '42703') throw error; } }
 
-  await q(`INSERT INTO schema_migrations(version) VALUES('4.0.0') ON CONFLICT DO NOTHING`);
+  await q(`INSERT INTO schema_migrations(version) VALUES('4.0.1') ON CONFLICT DO NOTHING`);
   await ensureMaster();
+  await applyMasterRecovery();
 }
 
 async function ensureMaster() {
-  const found = await pool.query(`SELECT id FROM users WHERE role='MASTER' AND active=TRUE AND deleted_at IS NULL LIMIT 1`);
+  const found = await pool.query(`SELECT id FROM users WHERE role='MASTER' LIMIT 1`);
   if (found.rowCount) return;
-  if (!config.masterInitialPassword) {
-    throw new Error('No existe usuario Máster y MASTER_INITIAL_PASSWORD está vacío');
+  const bootstrapPassword = config.masterInitialPassword || config.masterRecoveryPassword;
+  if (!bootstrapPassword) {
+    throw new Error('No existe usuario Máster. Configura MASTER_INITIAL_PASSWORD o MASTER_RECOVERY_PASSWORD');
   }
-  const hash = await bcrypt.hash(config.masterInitialPassword, 12);
+  const hash = await bcrypt.hash(bootstrapPassword, 12);
   await tx(async client => {
     await client.query(`INSERT INTO users(name,email,username,password_hash,role,active,must_change_password)
       VALUES($1,$2,$3,$4,'MASTER',TRUE,TRUE)`, [config.masterName, `${config.masterUsername}@capsan6.local`, config.masterUsername, hash]);
   });
   console.log(`Usuario Máster inicial creado: ${config.masterUsername}`);
+}
+
+async function applyMasterRecovery() {
+  const password = String(config.masterRecoveryPassword || '');
+  if (!password) return;
+  if (!/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{10,}$/.test(password)) {
+    throw new Error('MASTER_RECOVERY_PASSWORD debe tener mínimo 10 caracteres, mayúscula, minúscula y número');
+  }
+  if (password.toLowerCase() === String(config.masterUsername).toLowerCase()) {
+    throw new Error('MASTER_RECOVERY_PASSWORD no puede ser igual al usuario Máster');
+  }
+  await q(`CREATE TABLE IF NOT EXISTS master_recovery_events (
+    fingerprint VARCHAR(64) PRIMARY KEY,
+    master_user_id INTEGER REFERENCES users(id),
+    applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`);
+  const fingerprint = createHash('sha256')
+    .update(`capsan6-master-recovery-v1:${config.masterUsername}:${password}`)
+    .digest('hex');
+  const used = await pool.query(`SELECT 1 FROM master_recovery_events WHERE fingerprint=$1`, [fingerprint]);
+  if (used.rowCount) return;
+  await tx(async client => {
+    await client.query(`SELECT pg_advisory_xact_lock(64001)`);
+    const repeated = await client.query(`SELECT 1 FROM master_recovery_events WHERE fingerprint=$1`, [fingerprint]);
+    if (repeated.rowCount) return;
+    const target = (await client.query(`SELECT * FROM users WHERE role='MASTER'
+      ORDER BY (username=$1) DESC, active DESC, id ASC LIMIT 1`, [config.masterUsername])).rows[0];
+    if (!target) throw new Error('No se encontró una cuenta Máster para recuperar');
+    const conflict = await client.query(`SELECT id FROM users WHERE username=$1 AND id<>$2 LIMIT 1`, [config.masterUsername, target.id]);
+    const username = conflict.rowCount ? target.username : config.masterUsername;
+    const hash = await bcrypt.hash(password, 12);
+    await client.query(`UPDATE users SET username=$1,password_hash=$2,role='MASTER',active=TRUE,
+      deleted_at=NULL,deleted_by=NULL,must_change_password=TRUE WHERE id=$3`, [username, hash, target.id]);
+    await client.query(`INSERT INTO master_recovery_events(fingerprint,master_user_id) VALUES($1,$2)`, [fingerprint, target.id]);
+  });
+  console.log(`Recuperación Máster aplicada una sola vez para: ${config.masterUsername}`);
 }
