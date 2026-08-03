@@ -8,7 +8,7 @@ import { authRequired, requireCapability, assertUnitAccess } from '../auth.js';
 import { pool, tx } from '../db.js';
 import { analyzeRacWorkbook } from '../imports/racWorkbook.js';
 import { classifyRac } from '../services/ai.js';
-import { fetchRacCauseCatalog, resolveRacCauseSelection, createRacCauseSubtype } from '../services/racCatalog.js';
+import { fetchRacCauseCatalog, resolveRacCauseSelection, createRacCauseSubtype, canonicalRacReportType } from '../services/racCatalog.js';
 import { saveUpload } from '../services/storage.js';
 import { queueAsset } from '../services/drive.js';
 import { audit, notify } from '../services/audit.js';
@@ -76,7 +76,7 @@ racsRouter.post('/cause-subtypes',requireCapability('rac:catalog.manage'),async(
 racsRouter.post('/',requireCapability('rac:create'),async(req,res)=>{
   const b=req.body;const unitId=Number(b.businessUnitId);if(!assertUnitAccess(req.user,unitId))return res.status(403).json({error:'Unidad fuera de tu alcance'});
   const description=upper(b.description);if(!description)return res.status(400).json({error:'Descripción requerida'});
-  const ai=b.useAi===false?null:await classifyRac(description);const reportDate=b.reportDate||new Date().toISOString().slice(0,10);const risk=upper(b.riskLevel)||'BAJO';const reportType=upper(b.reportType)||ai?.reportType||'CONDICION SUBESTANDAR';
+  const ai=b.useAi===false?null:await classifyRac(description);const reportDate=b.reportDate||new Date().toISOString().slice(0,10);const risk=upper(b.riskLevel)||'BAJO';const reportType=canonicalRacReportType(b.reportType||ai?.reportType)||'CONDICION SUBESTANDAR';
   const row=await tx(async client=>{
     const reporting=await areaId(client,b.reportingArea,unitId);const reported=await areaId(client,b.reportedArea||b.reportingArea,unitId);const bu=await unit(client,unitId);if(!bu)throw Object.assign(new Error('Unidad no encontrada'),{status:404});
     const selectedCause=await resolveRacCauseSelection(client,{categoryId:b.causeCategoryId,subtypeId:b.causeSubtypeId,categoryName:b.causeCategory,subtypeName:b.causeSubtype,reportType,fallbackText:description});
@@ -189,7 +189,7 @@ racsRouter.post('/import',requireCapability('rac:import'),upload.single('file'),
           RETURNING id
         `,[
           r.sourceReportNumber,bu.id,reporting,reported,r.reporterName,r.reporterType,
-          r.location,r.reportDate,r.riskLevel,selectedCause.category.reportType,selectedCause.subtype.name,selectedCause.category.name,
+          r.location,r.reportDate,r.riskLevel,canonicalRacReportType(r.reportType)||selectedCause.reportType,selectedCause.subtype.name,selectedCause.category.name,
           selectedCause.subtype.name,r.description,matchedSupervisor?.id||null,r.supervisorName||null,
           r.correctiveAction||null,r.status,r.progressPercent,dueDate(r.reportDate,r.riskLevel),
           Boolean(r.environmentalFlag||selectedCause.category.code==='VI'),selectedCause.category.code==='VI'?selectedCause.subtype.name:r.environmentalCategory,r.environmentalConfidence,r.sourceFile,
@@ -213,7 +213,7 @@ racsRouter.post('/import',requireCapability('rac:import'),upload.single('file'),
           RETURNING id
         `,[
           r.internalCode,r.sourceReportNumber,bu.id,reporting,reported,r.reporterName,r.reporterType,
-          r.location,r.reportDate,r.riskLevel,selectedCause.category.reportType,selectedCause.subtype.name,selectedCause.category.name,
+          r.location,r.reportDate,r.riskLevel,canonicalRacReportType(r.reportType)||selectedCause.reportType,selectedCause.subtype.name,selectedCause.category.name,
           selectedCause.subtype.name,r.description,matchedSupervisor?.id||null,r.supervisorName||null,
           r.correctiveAction||null,r.status,r.progressPercent,dueDate(r.reportDate,r.riskLevel),
           Boolean(r.environmentalFlag||selectedCause.category.code==='VI'),selectedCause.category.code==='VI'?selectedCause.subtype.name:r.environmentalCategory,r.environmentalConfidence,r.sourceFile,

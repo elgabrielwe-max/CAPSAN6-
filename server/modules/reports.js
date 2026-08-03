@@ -7,8 +7,10 @@ import { buildTrainingExcel } from '../reports/trainingExecutive.js';
 import { buildFlashReportExcel } from '../reports/flashReport.js';
 import { audit } from '../services/audit.js';
 import { config } from '../config.js';
+import { reportPeriod } from '../services/reportDates.js';
 
 export const reportsRouter=Router();
+const asyncRoute=handler=>(req,res,next)=>Promise.resolve(handler(req,res,next)).catch(next);
 reportsRouter.use(authRequired,requireCapability('reports:executive'));
 
 function paramsFrom(query,user){
@@ -39,13 +41,6 @@ async function workerCounts(){
   return Object.fromEntries((await pool.query(`SELECT bu.name,COUNT(*)::int total FROM workers w JOIN business_units bu ON bu.id=w.business_unit_id WHERE w.active=TRUE GROUP BY bu.name`)).rows.map(x=>[x.name,x.total]));
 }
 
-function reportPeriod(rows,query){
-  const dates=rows.map(r=>String(r.report_date||'').slice(0,10)).filter(Boolean).sort();
-  const reference=query.to||dates.at(-1)||new Date().toISOString().slice(0,10);
-  const [year,month]=reference.split('-');
-  return{from:query.from||`${year}-${month}-01`,to:query.to||reference};
-}
-
 async function trainingCalendar(user,query,rows){
   const period=reportPeriod(rows,query);const params=[period.from,period.to];const clauses=[`COALESCE(t.start_date,t.created_at::date) BETWEEN $1::date AND $2::date`];let i=3;
   if(user.role!=='MASTER'){clauses.push(`tt.business_unit_id=ANY($${i++}::int[])`);params.push(user.units.map(x=>Number(x.id)));}
@@ -64,15 +59,15 @@ async function label(query){
   return `Periodo: ${query.from||'inicio'} a ${query.to||'hoy'}${unit?` · Unidad: ${unit}`:''}`;
 }
 
-reportsRouter.get('/racs/executive.xlsx',async(req,res)=>{
+reportsRouter.get('/racs/executive.xlsx',asyncRoute(async(req,res)=>{
   const rows=await reportRows(req.query,req.user);const buffer=await buildRacExecutiveExcel(rows,await label(req.query),await workerCounts());
   await audit(req,'DOWNLOAD_RAC_EXECUTIVE_EXCEL','REPORT',null,{rows:rows.length});res.setHeader('content-type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');res.setHeader('content-disposition','attachment; filename="CAPSAN6_REPORTE_EJECUTIVO_RACS.xlsx"');res.send(Buffer.from(buffer));
-});
-reportsRouter.get('/racs/executive.pptx',async(req,res)=>{
+}));
+reportsRouter.get('/racs/executive.pptx',asyncRoute(async(req,res)=>{
   const rows=await reportRows(req.query,req.user);const period=reportPeriod(rows,req.query);const context={...period,trainingCalendar:await trainingCalendar(req.user,req.query,rows)};
   const buffer=await buildRacExecutivePpt(rows,await label(req.query),await workerCounts(),context);
   await audit(req,'DOWNLOAD_RAC_EXECUTIVE_PPT','REPORT',null,{rows:rows.length,format:'MODELO_OPTIMUS'});res.setHeader('content-type','application/vnd.openxmlformats-officedocument.presentationml.presentation');res.setHeader('content-disposition','attachment; filename="REPORTE_DIARIO_DE_SEGURIDAD_CAPSAN6.pptx"');res.send(Buffer.from(buffer));
-});
+}));
 
 async function trainingData(user,query={}){
   const unitIds=user.role==='MASTER'?null:user.units.map(x=>Number(x.id));const params=[unitIds];const clauses=[`($1::int[] IS NULL OR w.business_unit_id=ANY($1::int[]))`];let i=2;
@@ -86,8 +81,8 @@ async function trainingData(user,query={}){
   const pct=(a,b)=>Number(b)?Math.round(Number(a)*100/Number(b)):0;const data={kpis:{...k,trainingCompliance:pct(k.graded,k.expected),gradeCompliance:pct(k.graded,k.expected),trainedPercent:pct(k.graded,k.expected),approvalPercent:pct(k.approved,k.graded)},byArea:byArea.map(x=>({...x,compliance:pct(x.graded,x.expected),approval:pct(x.approved,x.graded)})),byTopic:byTopic.map(x=>({...x,compliance:pct(x.graded,x.expected),approval:pct(x.approved,x.graded)}))};
   const detail=(await pool.query(`SELECT w.dni,w.full_name worker,bu.name unit,a.name area,t.title training,g.score,g.result,g.entered_at date FROM grades g JOIN workers w ON w.id=g.worker_id JOIN business_units bu ON bu.id=w.business_unit_id JOIN areas a ON a.id=w.area_id JOIN trainings t ON t.id=g.training_id WHERE ${where} ORDER BY g.entered_at DESC`,params)).rows;return{data,detail};
 }
-reportsRouter.get('/training/executive.xlsx',async(req,res)=>{const {data,detail}=await trainingData(req.user,req.query);const buffer=await buildTrainingExcel(data,detail);res.setHeader('content-type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');res.setHeader('content-disposition','attachment; filename="CAPSAN6_REPORTE_EJECUTIVO_CAPACITACION.xlsx"');res.send(Buffer.from(buffer));});
+reportsRouter.get('/training/executive.xlsx',asyncRoute(async(req,res)=>{const {data,detail}=await trainingData(req.user,req.query);const buffer=await buildTrainingExcel(data,detail);res.setHeader('content-type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');res.setHeader('content-disposition','attachment; filename="CAPSAN6_REPORTE_EJECUTIVO_CAPACITACION.xlsx"');res.send(Buffer.from(buffer));}));
 
-reportsRouter.get('/incidents/:id/flash.xlsx',async(req,res)=>{const report=(await pool.query(`SELECT f.*,bu.name business_unit_name,a.name area_name,u.name created_by_name FROM flash_reports f LEFT JOIN business_units bu ON bu.id=f.business_unit_id LEFT JOIN areas a ON a.id=f.area_id LEFT JOIN users u ON u.id=f.created_by WHERE f.id=$1`,[Number(req.params.id)])).rows[0];if(!report)return res.status(404).json({error:'Flash Report no encontrado'});const images=(await pool.query(`SELECT fa.local_path,fa.mime_type,fa.original_name,fa.drive_web_link FROM file_assets fa WHERE fa.entity_type='FLASH_REPORT' AND fa.entity_id=$1 ORDER BY fa.id LIMIT 2`,[String(report.id)])).rows;const buffer=await buildFlashReportExcel(report,images);res.setHeader('content-type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');res.setHeader('content-disposition',`attachment; filename="${report.report_code||'FLASH_REPORT'}.xlsx"`);res.send(Buffer.from(buffer));});
+reportsRouter.get('/incidents/:id/flash.xlsx',asyncRoute(async(req,res)=>{const report=(await pool.query(`SELECT f.*,bu.name business_unit_name,a.name area_name,u.name created_by_name FROM flash_reports f LEFT JOIN business_units bu ON bu.id=f.business_unit_id LEFT JOIN areas a ON a.id=f.area_id LEFT JOIN users u ON u.id=f.created_by WHERE f.id=$1`,[Number(req.params.id)])).rows[0];if(!report)return res.status(404).json({error:'Flash Report no encontrado'});const images=(await pool.query(`SELECT fa.local_path,fa.mime_type,fa.original_name,fa.drive_web_link FROM file_assets fa WHERE fa.entity_type='FLASH_REPORT' AND fa.entity_id=$1 ORDER BY fa.id LIMIT 2`,[String(report.id)])).rows;const buffer=await buildFlashReportExcel(report,images);res.setHeader('content-type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');res.setHeader('content-disposition',`attachment; filename="${report.report_code||'FLASH_REPORT'}.xlsx"`);res.send(Buffer.from(buffer));}));
 
-reportsRouter.post('/public-link',async(req,res)=>{const token=crypto.randomBytes(32).toString('base64url');const hash=crypto.createHash('sha256').update(token).digest('hex');const hours=Math.max(1,Math.min(Number(req.body.hours||168),720));const filters={...(req.body.filters||{}),ownerUserId:req.user.id,ownerRole:req.user.role,unitIds:req.user.role==='MASTER'?null:req.user.units.map(x=>Number(x.id))};await pool.query(`INSERT INTO public_share_links(token_hash,scope,filters,created_by,expires_at) VALUES($1,$2,$3::jsonb,$4,NOW()+make_interval(hours => $5::int))`,[hash,req.body.scope||'RACS_EXECUTIVE',JSON.stringify(filters),req.user.id,hours]);const base=config.publicUrl||`${req.protocol}://${req.get('host')}`;res.json({url:`${base}/public-dashboard.html?token=${encodeURIComponent(token)}`,expiresInHours:hours});});
+reportsRouter.post('/public-link',asyncRoute(async(req,res)=>{const token=crypto.randomBytes(32).toString('base64url');const hash=crypto.createHash('sha256').update(token).digest('hex');const hours=Math.max(1,Math.min(Number(req.body.hours||168),720));const filters={...(req.body.filters||{}),ownerUserId:req.user.id,ownerRole:req.user.role,unitIds:req.user.role==='MASTER'?null:req.user.units.map(x=>Number(x.id))};await pool.query(`INSERT INTO public_share_links(token_hash,scope,filters,created_by,expires_at) VALUES($1,$2,$3::jsonb,$4,NOW()+make_interval(hours => $5::int))`,[hash,req.body.scope||'RACS_EXECUTIVE',JSON.stringify(filters),req.user.id,hours]);const base=config.publicUrl||`${req.protocol}://${req.get('host')}`;res.json({url:`${base}/public-dashboard.html?token=${encodeURIComponent(token)}`,expiresInHours:hours});}));

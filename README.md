@@ -1,4 +1,4 @@
-# CAPSAN6 4.0.6 · Sistema Integral de Gestión SSOMA
+# CAPSAN6 4.0.7 · Sistema Integral de Gestión SSOMA
 
 CAPSAN6 4.0.0 es una reconstrucción completa del sistema. La interfaz, la arquitectura del servidor y el modelo relacional fueron creados nuevamente para que todos los módulos trabajen sobre una sola fuente de datos.
 
@@ -98,3 +98,12 @@ Lee `CONFIGURACION_RAILWAY_Y_DRIVE.md` y `MIGRACION_DESDE_CAPSAN6_3.md` antes de
 ## Paquete ligero para GitHub
 
 La presentación empresarial usada como referencia visual no se incluye como archivo binario porque supera el límite de 25 MB de la carga web de GitHub. El generador del PPT Ejecutivo reproduce el modelo desde código y no necesita esa presentación en producción.
+
+
+## Corrección 4.0.7
+
+- El tipo de reporte (acto o condición) se conserva independiente de la causa y subcausa seleccionadas.
+- El catálogo completo I–VIII está disponible para ambos tipos de reporte, sin bloquear registros históricos válidos.
+- La importación conserva el tipo de reporte del Excel y normaliza la causa por catálogo.
+- El PPT Ejecutivo acepta fechas PostgreSQL devueltas como objetos `Date` o texto ISO.
+- Los errores al generar reportes son enviados al manejador HTTP y ya no reinician el servicio.
