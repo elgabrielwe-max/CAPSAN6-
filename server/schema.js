@@ -211,6 +211,69 @@ export async function initSchema() {
       UNIQUE(training_id, worker_id)
     );
 
+    CREATE TABLE IF NOT EXISTS dds_sessions (
+      id BIGSERIAL PRIMARY KEY,
+      session_date DATE NOT NULL DEFAULT CURRENT_DATE,
+      business_unit_id INTEGER NOT NULL REFERENCES business_units(id),
+      area_id INTEGER REFERENCES areas(id) ON DELETE SET NULL,
+      shift VARCHAR(30) NOT NULL DEFAULT 'DÍA',
+      guard VARCHAR(40),
+      topic VARCHAR(240) NOT NULL,
+      objective TEXT,
+      duration_minutes INTEGER NOT NULL DEFAULT 5 CHECK(duration_minutes BETWEEN 1 AND 180),
+      presenter_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      presenter_name VARCHAR(180),
+      observations TEXT,
+      status VARCHAR(30) NOT NULL DEFAULT 'REALIZADO' CHECK(status IN ('BORRADOR','REALIZADO')),
+      created_by INTEGER REFERENCES users(id),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_dds_scope ON dds_sessions(business_unit_id,session_date,area_id,status);
+    CREATE TABLE IF NOT EXISTS dds_attendance (
+      id BIGSERIAL PRIMARY KEY,
+      dds_id BIGINT NOT NULL REFERENCES dds_sessions(id) ON DELETE CASCADE,
+      worker_id INTEGER NOT NULL REFERENCES workers(id) ON DELETE CASCADE,
+      attendance_status VARCHAR(30) NOT NULL DEFAULT 'ASISTIO' CHECK(attendance_status IN ('ASISTIO','NO ASISTIO','JUSTIFICADO')),
+      observation TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE(dds_id,worker_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_dds_attendance_worker ON dds_attendance(worker_id,dds_id);
+
+    CREATE TABLE IF NOT EXISTS rit_sessions (
+      id BIGSERIAL PRIMARY KEY,
+      meeting_date DATE NOT NULL DEFAULT CURRENT_DATE,
+      business_unit_id INTEGER NOT NULL REFERENCES business_units(id),
+      area_id INTEGER REFERENCES areas(id) ON DELETE SET NULL,
+      shift VARCHAR(30) NOT NULL DEFAULT 'DÍA',
+      guard VARCHAR(40),
+      supervisor_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      supervisor_name VARCHAR(180),
+      previous_shift_summary TEXT,
+      planned_activities JSONB NOT NULL DEFAULT '[]'::jsonb,
+      critical_risks JSONB NOT NULL DEFAULT '[]'::jsonb,
+      controls JSONB NOT NULL DEFAULT '[]'::jsonb,
+      restrictions TEXT,
+      commitments JSONB NOT NULL DEFAULT '[]'::jsonb,
+      observations TEXT,
+      status VARCHAR(30) NOT NULL DEFAULT 'REALIZADO' CHECK(status IN ('PLANIFICADO','REALIZADO','CERRADO')),
+      created_by INTEGER REFERENCES users(id),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_rit_scope ON rit_sessions(business_unit_id,meeting_date,area_id,status);
+    CREATE TABLE IF NOT EXISTS rit_participants (
+      id BIGSERIAL PRIMARY KEY,
+      rit_id BIGINT NOT NULL REFERENCES rit_sessions(id) ON DELETE CASCADE,
+      worker_id INTEGER NOT NULL REFERENCES workers(id) ON DELETE CASCADE,
+      assigned_activity TEXT,
+      responsibility TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE(rit_id,worker_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_rit_participants_worker ON rit_participants(worker_id,rit_id);
+
     CREATE TABLE IF NOT EXISTS rac_cause_categories (
       id SERIAL PRIMARY KEY,
       code VARCHAR(10) UNIQUE NOT NULL,
@@ -618,6 +681,12 @@ export async function initSchema() {
       SELECT ssoma_user_id,business_unit_id FROM ssoma_evidence
         WHERE ssoma_user_id IS NOT NULL AND business_unit_id IS NOT NULL
       UNION
+      SELECT presenter_user_id,business_unit_id FROM dds_sessions
+        WHERE presenter_user_id IS NOT NULL AND business_unit_id IS NOT NULL
+      UNION
+      SELECT supervisor_user_id,business_unit_id FROM rit_sessions
+        WHERE supervisor_user_id IS NOT NULL AND business_unit_id IS NOT NULL
+      UNION
       SELECT g.entered_by,w.business_unit_id FROM grades g JOIN workers w ON w.id=g.worker_id
         WHERE g.entered_by IS NOT NULL AND w.business_unit_id IS NOT NULL
     ) inferred
@@ -639,6 +708,7 @@ export async function initSchema() {
   await q(`INSERT INTO schema_migrations(version) VALUES('4.0.13') ON CONFLICT DO NOTHING`);
   await q(`INSERT INTO schema_migrations(version) VALUES('4.0.14') ON CONFLICT DO NOTHING`);
   await q(`INSERT INTO schema_migrations(version) VALUES('4.0.15') ON CONFLICT DO NOTHING`);
+  await q(`INSERT INTO schema_migrations(version) VALUES('4.0.19') ON CONFLICT DO NOTHING`);
   await ensureMaster();
   await applyMasterRecovery();
 }

@@ -1,4 +1,22 @@
-# CAPSAN6 4.0.15 · Sistema Integral de Gestión SSOMA
+# CAPSAN6 4.0.19 · Sistema Integral de Gestión SSOMA
+
+## Corrección 4.0.16 · Depuración de RACS
+
+- Evita que el formulario recargue la página al confirmar la eliminación.
+- Valida la frase exacta y la contraseña Máster antes de ejecutar.
+- Evita dobles clics y muestra la cantidad realmente eliminada.
+
+
+
+## Nuevo módulo 4.0.19 · DDS y Reunión de Inicio de Turno
+
+- DDS con fecha, unidad, área, turno, guardia, tema, objetivo, duración y observaciones.
+- Asistencia vinculada directamente a la base maestra de trabajadores existente.
+- Estados de asistencia: asistió, no asistió y justificado.
+- RIT con actividades planificadas, riesgos críticos, controles, restricciones y compromisos.
+- Asignación de actividades y responsabilidades por trabajador.
+- Historial, edición y seguimiento por unidad y periodo.
+- Acceso para Máster, SSOMA y Supervisor, respetando las unidades vinculadas a cada perfil.
 
 CAPSAN6 4.0.0 es una reconstrucción completa del sistema. La interfaz, la arquitectura del servidor y el modelo relacional fueron creados nuevamente para que todos los módulos trabajen sobre una sola fuente de datos.
 

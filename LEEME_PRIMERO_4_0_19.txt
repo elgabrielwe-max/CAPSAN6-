@@ -1,0 +1,9 @@
+CAPSAN6 4.0.19 — DDS Y RIT
+
+1. Sube el contenido del proyecto a GitHub conservando las carpetas.
+2. Railway ejecutará la migración automática al iniciar.
+3. No necesitas volver a importar trabajadores: DDS y RIT usan la base existente.
+4. En CAPSAN6 abre: Gestión diaria > DDS y RIT.
+5. Selecciona unidad, área y guardia; luego pulsa Cargar trabajadores.
+
+La migración no elimina RACS, capacitaciones, trabajadores ni incidentes existentes.
