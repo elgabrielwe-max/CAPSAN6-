@@ -594,6 +594,7 @@ export async function initSchema() {
   await q(`ALTER TABLE trainings ALTER COLUMN approved_min SET DEFAULT 16`);
   await q(`INSERT INTO schema_migrations(version) VALUES('4.0.8') ON CONFLICT DO NOTHING`);
   await q(`INSERT INTO schema_migrations(version) VALUES('4.0.9') ON CONFLICT DO NOTHING`);
+  await q(`INSERT INTO schema_migrations(version) VALUES('4.0.10') ON CONFLICT DO NOTHING`);
   await ensureMaster();
   await applyMasterRecovery();
 }

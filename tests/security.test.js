@@ -21,13 +21,14 @@ test('depuración RACS exige contraseña, frase exacta y respaldo',async()=>{
   assert.match(src,/bcrypt\.compare/);
 });
 
-test('supervisores se limitan por unidades y sus RACS',async()=>{
+test('supervisores se limitan por unidades y ven automáticamente los RACS de esas unidades',async()=>{
   const auth=await read('server/auth.js');
   const reports=await read('server/modules/reports.js');
+  const racs=await read('server/modules/racs.js');
   assert.match(auth,/user_business_units/);
-  assert.match(reports,/user\.role==='SUPERVISOR'/);
-  assert.match(reports,/r\.supervisor_user_id/);
-  assert.match(reports,/rac_assignments/);
+  assert.match(reports,/r\.business_unit_id=ANY/);
+  assert.match(racs,/unitScope\(req\.user/);
+  assert.doesNotMatch(reports,/user\.role==='SUPERVISOR'.*supervisor_user_id/);
 });
 
 test('enlaces públicos son firmados, revocables y expiran',async()=>{

@@ -31,13 +31,12 @@ async function areaId(client,name,businessUnitId=null){
 }
 async function unit(client,id){const r=await client.query(`SELECT * FROM business_units WHERE id=$1 AND active=TRUE`,[Number(id)]);return r.rows[0];}
 function dueDate(date,risk){const days=risk==='ALTO'?1:risk==='MEDIO'?3:7;const d=new Date(`${date}T12:00:00Z`);d.setUTCDate(d.getUTCDate()+days);return d.toISOString().slice(0,10);}
-function supervisorClause(user,alias='r'){
-  if(user.role!=='SUPERVISOR')return 'TRUE';
-  return `(${alias}.supervisor_user_id=${Number(user.id)} OR ${alias}.created_by=${Number(user.id)} OR EXISTS(SELECT 1 FROM rac_assignments ra WHERE ra.rac_id=${alias}.id AND ra.supervisor_user_id=${Number(user.id)} AND ra.active=TRUE))`;
-}
-
 function buildWhere(req,alias='r'){
-  const scope=unitScope(req.user,alias,1);const filters=parseFilters(req.query,scope.next,alias);return{where:`${scope.clause} AND ${supervisorClause(req.user,alias)} AND ${filters.clause}`,params:[...scope.params,...filters.params]};
+  // La visibilidad se determina exclusivamente por las unidades vinculadas al perfil.
+  // La asignación individual indica al responsable directo, pero no limita la lectura.
+  const scope=unitScope(req.user,alias,1);
+  const filters=parseFilters(req.query,scope.next,alias);
+  return{where:`${scope.clause} AND ${filters.clause}`,params:[...scope.params,...filters.params]};
 }
 
 racsRouter.get('/dashboard',requireCapability('rac:view'),async(req,res)=>{
@@ -366,7 +365,7 @@ racsRouter.post('/:id/assign',requireCapability('rac:assign'),async(req,res)=>{
 });
 
 racsRouter.post('/:id/status',requireCapability('rac:followup'),upload.single('evidence'),async(req,res)=>{
-  const id=Number(req.params.id);const rac=(await pool.query(`SELECT * FROM racs WHERE id=$1`,[id])).rows[0];if(!rac)return res.status(404).json({error:'RAC no encontrado'});if(!assertUnitAccess(req.user,rac.business_unit_id)||!['MASTER','SSOMA'].includes(req.user.role)&&!([rac.created_by,rac.supervisor_user_id].includes(req.user.id)||(await pool.query(`SELECT 1 FROM rac_assignments WHERE rac_id=$1 AND supervisor_user_id=$2 AND active=TRUE`,[id,req.user.id])).rowCount))return res.status(403).json({error:'RAC fuera de tu alcance'});
+  const id=Number(req.params.id);const rac=(await pool.query(`SELECT * FROM racs WHERE id=$1`,[id])).rows[0];if(!rac)return res.status(404).json({error:'RAC no encontrado'});if(!assertUnitAccess(req.user,rac.business_unit_id))return res.status(403).json({error:'RAC fuera de tu alcance'});
   const target=upper(req.body.status);const allowed=['PENDIENTE','EN PROCESO','PENDIENTE DE VALIDACION','DEVUELTO PARA CORRECCION','LEVANTADO'];if(!allowed.includes(target))return res.status(400).json({error:'Estado inválido'});
   if(req.user.role==='SUPERVISOR'&&['DEVUELTO PARA CORRECCION','LEVANTADO'].includes(target))return res.status(403).json({error:'El levantamiento debe validarlo SSOMA o Máster'});
   if(target==='PENDIENTE DE VALIDACION'&&!req.file)return res.status(400).json({error:'Adjunta evidencia final para solicitar validación'});

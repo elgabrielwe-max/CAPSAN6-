@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import crypto from 'node:crypto';
-import { authRequired, requireCapability } from '../auth.js';
+import { authRequired, requireCapability, assertUnitAccess } from '../auth.js';
 import { pool } from '../db.js';
 import { buildRacExecutiveExcel, buildRacExecutivePpt } from '../reports/racExecutive.js';
 import { buildTrainingExcel } from '../reports/trainingExecutive.js';
@@ -16,7 +16,6 @@ reportsRouter.use(authRequired,requireCapability('reports:executive'));
 function paramsFrom(query,user){
   const params=[];const clauses=['TRUE'];let i=1;
   if(user.role!=='MASTER'){clauses.push(`r.business_unit_id=ANY($${i++}::int[])`);params.push(user.units.map(x=>Number(x.id)));}
-  if(user.role==='SUPERVISOR'){clauses.push(`(r.supervisor_user_id=$${i} OR r.created_by=$${i} OR EXISTS(SELECT 1 FROM rac_assignments ra WHERE ra.rac_id=r.id AND ra.supervisor_user_id=$${i} AND ra.active=TRUE))`);params.push(user.id);i++;}
   if(query.businessUnitId){clauses.push(`r.business_unit_id=$${i++}`);params.push(Number(query.businessUnitId));}
   if(query.from){clauses.push(`r.report_date>=$${i++}::date`);params.push(query.from);}
   if(query.to){clauses.push(`r.report_date<=$${i++}::date`);params.push(query.to);}
@@ -37,8 +36,12 @@ async function reportRows(query,user){
   return rows.map(r=>({...r,evidence_files:byRac.get(String(r.id))||[]}));
 }
 
-async function workerCounts(){
-  return Object.fromEntries((await pool.query(`SELECT bu.name,COUNT(*)::int total FROM workers w JOIN business_units bu ON bu.id=w.business_unit_id WHERE w.active=TRUE GROUP BY bu.name`)).rows.map(x=>[x.name,x.total]));
+async function workerCounts(user){
+  const unitIds=user.role==='MASTER'?null:user.units.map(x=>Number(x.id));
+  return Object.fromEntries((await pool.query(`SELECT bu.name,COUNT(*)::int total
+    FROM workers w JOIN business_units bu ON bu.id=w.business_unit_id
+    WHERE w.active=TRUE AND ($1::int[] IS NULL OR w.business_unit_id=ANY($1::int[]))
+    GROUP BY bu.name`,[unitIds])).rows.map(x=>[x.name,x.total]));
 }
 
 async function trainingCalendar(user,query,rows){
@@ -60,12 +63,12 @@ async function label(query){
 }
 
 reportsRouter.get('/racs/executive.xlsx',asyncRoute(async(req,res)=>{
-  const rows=await reportRows(req.query,req.user);const buffer=await buildRacExecutiveExcel(rows,await label(req.query),await workerCounts());
+  const rows=await reportRows(req.query,req.user);const buffer=await buildRacExecutiveExcel(rows,await label(req.query),await workerCounts(req.user));
   await audit(req,'DOWNLOAD_RAC_EXECUTIVE_EXCEL','REPORT',null,{rows:rows.length});res.setHeader('content-type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');res.setHeader('content-disposition','attachment; filename="CAPSAN6_REPORTE_EJECUTIVO_RACS.xlsx"');res.send(Buffer.from(buffer));
 }));
 reportsRouter.get('/racs/executive.pptx',asyncRoute(async(req,res)=>{
   const rows=await reportRows(req.query,req.user);const period=reportPeriod(rows,req.query);const context={...period,trainingCalendar:await trainingCalendar(req.user,req.query,rows)};
-  const buffer=await buildRacExecutivePpt(rows,await label(req.query),await workerCounts(),context);
+  const buffer=await buildRacExecutivePpt(rows,await label(req.query),await workerCounts(req.user),context);
   await audit(req,'DOWNLOAD_RAC_EXECUTIVE_PPT','REPORT',null,{rows:rows.length,format:'MODELO_OPTIMUS'});res.setHeader('content-type','application/vnd.openxmlformats-officedocument.presentationml.presentation');res.setHeader('content-disposition','attachment; filename="REPORTE_DIARIO_DE_SEGURIDAD_CAPSAN6.pptx"');res.send(Buffer.from(buffer));
 }));
 
@@ -83,6 +86,6 @@ async function trainingData(user,query={}){
 }
 reportsRouter.get('/training/executive.xlsx',asyncRoute(async(req,res)=>{const {data,detail}=await trainingData(req.user,req.query);const buffer=await buildTrainingExcel(data,detail);res.setHeader('content-type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');res.setHeader('content-disposition','attachment; filename="CAPSAN6_REPORTE_EJECUTIVO_CAPACITACION.xlsx"');res.send(Buffer.from(buffer));}));
 
-reportsRouter.get('/incidents/:id/flash.xlsx',asyncRoute(async(req,res)=>{const report=(await pool.query(`SELECT f.*,bu.name business_unit_name,a.name area_name,u.name created_by_name FROM flash_reports f LEFT JOIN business_units bu ON bu.id=f.business_unit_id LEFT JOIN areas a ON a.id=f.area_id LEFT JOIN users u ON u.id=f.created_by WHERE f.id=$1`,[Number(req.params.id)])).rows[0];if(!report)return res.status(404).json({error:'Flash Report no encontrado'});const images=(await pool.query(`SELECT fa.local_path,fa.mime_type,fa.original_name,fa.drive_web_link FROM file_assets fa WHERE fa.entity_type='FLASH_REPORT' AND fa.entity_id=$1 ORDER BY fa.id LIMIT 2`,[String(report.id)])).rows;const buffer=await buildFlashReportExcel(report,images);res.setHeader('content-type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');res.setHeader('content-disposition',`attachment; filename="${report.report_code||'FLASH_REPORT'}.xlsx"`);res.send(Buffer.from(buffer));}));
+reportsRouter.get('/incidents/:id/flash.xlsx',asyncRoute(async(req,res)=>{const report=(await pool.query(`SELECT f.*,bu.name business_unit_name,a.name area_name,u.name created_by_name FROM flash_reports f LEFT JOIN business_units bu ON bu.id=f.business_unit_id LEFT JOIN areas a ON a.id=f.area_id LEFT JOIN users u ON u.id=f.created_by WHERE f.id=$1`,[Number(req.params.id)])).rows[0];if(!report)return res.status(404).json({error:'Flash Report no encontrado'});if(report.business_unit_id&&!assertUnitAccess(req.user,report.business_unit_id))return res.status(403).json({error:'Flash Report fuera de tu alcance'});const images=(await pool.query(`SELECT fa.local_path,fa.mime_type,fa.original_name,fa.drive_web_link FROM file_assets fa WHERE fa.entity_type='FLASH_REPORT' AND fa.entity_id=$1 ORDER BY fa.id LIMIT 2`,[String(report.id)])).rows;const buffer=await buildFlashReportExcel(report,images);res.setHeader('content-type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');res.setHeader('content-disposition',`attachment; filename="${report.report_code||'FLASH_REPORT'}.xlsx"`);res.send(Buffer.from(buffer));}));
 
 reportsRouter.post('/public-link',asyncRoute(async(req,res)=>{const token=crypto.randomBytes(32).toString('base64url');const hash=crypto.createHash('sha256').update(token).digest('hex');const hours=Math.max(1,Math.min(Number(req.body.hours||168),720));const filters={...(req.body.filters||{}),ownerUserId:req.user.id,ownerRole:req.user.role,unitIds:req.user.role==='MASTER'?null:req.user.units.map(x=>Number(x.id))};await pool.query(`INSERT INTO public_share_links(token_hash,scope,filters,created_by,expires_at) VALUES($1,$2,$3::jsonb,$4,NOW()+make_interval(hours => $5::int))`,[hash,req.body.scope||'RACS_EXECUTIVE',JSON.stringify(filters),req.user.id,hours]);const base=config.publicUrl||`${req.protocol}://${req.get('host')}`;res.json({url:`${base}/public-dashboard.html?token=${encodeURIComponent(token)}`,expiresInHours:hours});}));
