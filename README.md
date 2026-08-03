@@ -1,4 +1,4 @@
-# CAPSAN6 4.0.10 · Sistema Integral de Gestión SSOMA
+# CAPSAN6 4.0.11 · Sistema Integral de Gestión SSOMA
 
 CAPSAN6 4.0.0 es una reconstrucción completa del sistema. La interfaz, la arquitectura del servidor y el modelo relacional fueron creados nuevamente para que todos los módulos trabajen sobre una sola fuente de datos.
 
@@ -124,10 +124,17 @@ La presentación empresarial usada como referencia visual no se incluye como arc
 - Filtros por unidad, estado y búsqueda de RAC, reportante, lugar, causa o Supervisor.
 
 
-## Corrección 4.0.10
+## Corrección 4.0.11
 
 - Los Supervisores ven automáticamente toda la información correspondiente a las unidades de negocio vinculadas a su perfil.
 - La asignación individual de un RAC se conserva como identificación del responsable directo, pero ya no limita la visibilidad.
 - Dashboard RACS, listado, cambios, evidencias, Excel, PPT e hipervínculo utilizan el mismo alcance por unidad.
 - Un Supervisor con permiso de seguimiento puede registrar avance y evidencia en los RACS de sus unidades sin requerir una asignación previa.
 - El Dashboard principal limita trabajadores, capacitaciones e incidentes a las unidades del perfil.
+
+
+## Corrección 4.0.11 · Alcance real del Supervisor
+- Las unidades explícitamente vinculadas al perfil se cargan incluso cuando contienen información histórica o están inactivas.
+- Al ingresar como Supervisor o SSOMA, el sistema repara automáticamente vínculos históricos verificables desde RACS, asignaciones, notas, planes, evidencias e incidentes.
+- El Dashboard muestra las unidades que forman el alcance efectivo del perfil.
+- El Máster recibe el conteo de RACS disponibles al ingresar al perfil.

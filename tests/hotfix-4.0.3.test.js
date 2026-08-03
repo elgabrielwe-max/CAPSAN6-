@@ -16,6 +16,6 @@ test('importación RACS fuerza tipos compatibles para fechas y porcentaje', asyn
 test('la versión publicada conserva el hotfix de fechas en la versión vigente', async () => {
   const app = await read('server/app.js');
   const pkg = JSON.parse(await read('package.json'));
-  assert.equal(pkg.version, '4.0.10');
-  assert.match(app, /4\.0\.10-SUPERVISOR-POR-UNIDAD-AUTOMATICO/);
+  assert.ok(Number(pkg.version.split('.').at(-1)) >= 10);
+  assert.match(app, /ALCANCE-SUPERVISOR-REPARADO|SUPERVISOR-POR-UNIDAD-AUTOMATICO/);
 });

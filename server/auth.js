@@ -10,12 +10,42 @@ export async function authenticate(username, password) {
   const result = await pool.query(`SELECT * FROM users WHERE username=$1 AND active=TRUE AND deleted_at IS NULL`, [String(username || '').trim()]);
   const user = result.rows[0];
   if (!user || !(await bcrypt.compare(String(password || ''), user.password_hash))) return null;
-  const units = await userUnits(user.id);
+  const units = await userUnits(user.id, { repair: true, user });
   return { token: sign({ sub: user.id, actor: user.id, role: user.role }), user: publicUser(user, units) };
 }
 
-export async function userUnits(userId) {
-  const result = await pool.query(`SELECT bu.id,bu.name,bu.code FROM user_business_units ubu JOIN business_units bu ON bu.id=ubu.business_unit_id WHERE ubu.user_id=$1 AND bu.active=TRUE ORDER BY bu.name`, [userId]);
+export async function repairUserUnitLinks(user) {
+  if (!user || user.role === 'MASTER') return 0;
+  const result = await pool.query(`
+    WITH inferred AS (
+      SELECT business_unit_id FROM racs WHERE business_unit_id IS NOT NULL AND (supervisor_user_id=$1 OR created_by=$1)
+      UNION
+      SELECT r.business_unit_id FROM rac_assignments ra JOIN racs r ON r.id=ra.rac_id
+        WHERE ra.supervisor_user_id=$1 AND r.business_unit_id IS NOT NULL
+      UNION
+      SELECT business_unit_id FROM flash_reports WHERE created_by=$1 AND business_unit_id IS NOT NULL
+      UNION
+      SELECT business_unit_id FROM ssoma_work_plans WHERE ssoma_user_id=$1 AND business_unit_id IS NOT NULL
+      UNION
+      SELECT business_unit_id FROM ssoma_evidence WHERE ssoma_user_id=$1 AND business_unit_id IS NOT NULL
+      UNION
+      SELECT w.business_unit_id FROM grades g JOIN workers w ON w.id=g.worker_id
+        WHERE g.entered_by=$1 AND w.business_unit_id IS NOT NULL
+    )
+    INSERT INTO user_business_units(user_id,business_unit_id)
+    SELECT $1,business_unit_id FROM inferred
+    ON CONFLICT DO NOTHING
+    RETURNING business_unit_id
+  `, [Number(user.id)]);
+  return result.rowCount;
+}
+
+export async function userUnits(userId, options = {}) {
+  let result = await pool.query(`SELECT bu.id,bu.name,bu.code,bu.active FROM user_business_units ubu JOIN business_units bu ON bu.id=ubu.business_unit_id WHERE ubu.user_id=$1 ORDER BY bu.active DESC,bu.name`, [userId]);
+  if (!result.rowCount && options.repair && options.user && options.user.role !== 'MASTER') {
+    await repairUserUnitLinks(options.user);
+    result = await pool.query(`SELECT bu.id,bu.name,bu.code,bu.active FROM user_business_units ubu JOIN business_units bu ON bu.id=ubu.business_unit_id WHERE ubu.user_id=$1 ORDER BY bu.active DESC,bu.name`, [userId]);
+  }
   return result.rows;
 }
 
@@ -23,6 +53,8 @@ export function publicUser(user, units = []) {
   return {
     id: user.id, name: user.name, username: user.username, email: user.email, role: user.role,
     mustChangePassword: Boolean(user.must_change_password), units,
+    unitIds: units.map(unit => Number(unit.id)),
+    scopeReady: user.role === 'MASTER' || units.length > 0,
     capabilities: CAPABILITIES[user.role] || [],
   };
 }
@@ -36,7 +68,7 @@ export async function authRequired(req, res, next) {
     const result = await pool.query(`SELECT * FROM users WHERE id=$1 AND active=TRUE AND deleted_at IS NULL`, [decoded.sub]);
     const user = result.rows[0];
     if (!user) return res.status(401).json({ error: 'Usuario no disponible' });
-    const units = await userUnits(user.id);
+    const units = await userUnits(user.id, { repair: true, user });
     req.user = publicUser(user, units);
     req.user.actorId = Number(decoded.actor || decoded.sub);
     req.user.impersonating = req.user.actorId !== req.user.id;
@@ -67,6 +99,7 @@ export async function issueImpersonation(actor, targetId) {
   const result = await pool.query(`SELECT * FROM users WHERE id=$1 AND role IN ('SSOMA','SUPERVISOR') AND active=TRUE AND deleted_at IS NULL`, [targetId]);
   const target = result.rows[0];
   if (!target) throw Object.assign(new Error('Perfil no disponible'), { status: 404 });
+  await repairUserUnitLinks(target);
   return sign({ sub: target.id, actor: actor.id, role: target.role });
 }
 

@@ -24,5 +24,5 @@ dashboardRouter.get('/',async(req,res)=>{
     WHERE f.followup_status<>'CERRADO' AND ($1::int[] IS NULL OR f.business_unit_id=ANY($1::int[]))`,[unitIds])).rows[0].total||0);
   const states=(await pool.query(`SELECT status name,COUNT(*)::int total FROM racs r WHERE ${where} GROUP BY status ORDER BY total DESC`,params)).rows;
   const units=(await pool.query(`SELECT COALESCE(bu.name,'SIN UNIDAD') name,COUNT(*)::int total FROM racs r LEFT JOIN business_units bu ON bu.id=r.business_unit_id WHERE ${where} GROUP BY bu.name ORDER BY total DESC`,params)).rows;
-  res.json({kpis:{racs:rac.total,lifted:rac.lifted,pending:rac.pending,high:rac.high,environmental:rac.environmental,workers,trainings,openIncidents:incidents,closurePercent:rac.total?Math.round(rac.lifted*100/rac.total):0},states,units});
+  res.json({scope:{role:req.user.role,unitIds:req.user.units.map(x=>Number(x.id)),units:req.user.units,noUnitScope:req.user.role!=='MASTER'&&!req.user.units.length},kpis:{racs:rac.total,lifted:rac.lifted,pending:rac.pending,high:rac.high,environmental:rac.environmental,workers,trainings,openIncidents:incidents,closurePercent:rac.total?Math.round(rac.lifted*100/rac.total):0},states,units});
 });

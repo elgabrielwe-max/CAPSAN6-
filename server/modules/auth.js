@@ -20,9 +20,13 @@ authRouter.post('/change-password',authRequired,async(req,res)=>{
 });
 
 authRouter.post('/impersonate/:id',authRequired,async(req,res)=>{
-  const token=await issueImpersonation(req.user,Number(req.params.id));
-  await audit(req,'IMPERSONATE','USER',req.params.id);
-  res.json({token});
+  const targetId=Number(req.params.id);
+  const token=await issueImpersonation(req.user,targetId);
+  const target=(await pool.query(`SELECT * FROM users WHERE id=$1`,[targetId])).rows[0];
+  const units=target?await userUnits(target.id,{repair:true,user:target}):[];
+  const racCount=units.length?Number((await pool.query(`SELECT COUNT(*)::int total FROM racs WHERE business_unit_id=ANY($1::int[])`,[units.map(x=>Number(x.id))])).rows[0].total||0):0;
+  await audit(req,'IMPERSONATE','USER',req.params.id,{unitIds:units.map(x=>Number(x.id)),racCount});
+  res.json({token,user:target?publicUser(target,units):null,scope:{units,racCount}});
 });
 
 authRouter.post('/stop-impersonation',authRequired,async(req,res)=>{

@@ -36,9 +36,9 @@ test('Dashboard principal limita trabajadores capacitaciones e incidentes por un
   assert.match(source,/f\.business_unit_id=ANY/);
 });
 
-test('versión 4.0.10 publicada',async()=>{
+test('la versión vigente conserva el alcance automático de 4.0.10',async()=>{
   const pkg=JSON.parse(await read('package.json'));
   const app=await read('server/app.js');
-  assert.equal(pkg.version,'4.0.10');
-  assert.match(app,/4\.0\.10-SUPERVISOR-POR-UNIDAD-AUTOMATICO/);
+  assert.ok(Number(pkg.version.split('.').at(-1))>=10);
+  assert.match(app,/ALCANCE-SUPERVISOR-REPARADO|SUPERVISOR-POR-UNIDAD-AUTOMATICO/);
 });

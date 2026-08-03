@@ -595,6 +595,45 @@ export async function initSchema() {
   await q(`INSERT INTO schema_migrations(version) VALUES('4.0.8') ON CONFLICT DO NOTHING`);
   await q(`INSERT INTO schema_migrations(version) VALUES('4.0.9') ON CONFLICT DO NOTHING`);
   await q(`INSERT INTO schema_migrations(version) VALUES('4.0.10') ON CONFLICT DO NOTHING`);
+  // Repara el alcance histórico de Supervisores y SSOMA. Las unidades vinculadas
+  // siguen siendo visibles aunque la unidad esté inactiva, para conservar la data histórica.
+  await q(`
+    INSERT INTO user_business_units(user_id,business_unit_id)
+    SELECT DISTINCT user_id,business_unit_id FROM (
+      SELECT supervisor_user_id user_id,business_unit_id FROM racs
+        WHERE supervisor_user_id IS NOT NULL AND business_unit_id IS NOT NULL
+      UNION
+      SELECT ra.supervisor_user_id,r.business_unit_id FROM rac_assignments ra JOIN racs r ON r.id=ra.rac_id
+        WHERE r.business_unit_id IS NOT NULL
+      UNION
+      SELECT created_by,business_unit_id FROM racs
+        WHERE created_by IS NOT NULL AND business_unit_id IS NOT NULL
+      UNION
+      SELECT created_by,business_unit_id FROM flash_reports
+        WHERE created_by IS NOT NULL AND business_unit_id IS NOT NULL
+      UNION
+      SELECT ssoma_user_id,business_unit_id FROM ssoma_work_plans
+        WHERE ssoma_user_id IS NOT NULL AND business_unit_id IS NOT NULL
+      UNION
+      SELECT ssoma_user_id,business_unit_id FROM ssoma_evidence
+        WHERE ssoma_user_id IS NOT NULL AND business_unit_id IS NOT NULL
+      UNION
+      SELECT g.entered_by,w.business_unit_id FROM grades g JOIN workers w ON w.id=g.worker_id
+        WHERE g.entered_by IS NOT NULL AND w.business_unit_id IS NOT NULL
+    ) inferred
+    JOIN users u ON u.id=inferred.user_id AND u.role IN ('SUPERVISOR','SSOMA')
+    ON CONFLICT DO NOTHING
+  `);
+  await q(`
+    INSERT INTO user_business_units(user_id,business_unit_id)
+    SELECT DISTINCT u.id,r.business_unit_id
+    FROM users u JOIN racs r ON r.business_unit_id IS NOT NULL AND r.supervisor_name_text IS NOT NULL
+    WHERE u.role IN ('SUPERVISOR','SSOMA') AND u.deleted_at IS NULL
+      AND regexp_replace(translate(upper(u.name),'ÁÉÍÓÚÜÑ','AEIOUUN'),'[^A-Z0-9]+','','g')
+        = regexp_replace(translate(upper(r.supervisor_name_text),'ÁÉÍÓÚÜÑ','AEIOUUN'),'[^A-Z0-9]+','','g')
+    ON CONFLICT DO NOTHING
+  `);
+  await q(`INSERT INTO schema_migrations(version) VALUES('4.0.11') ON CONFLICT DO NOTHING`);
   await ensureMaster();
   await applyMasterRecovery();
 }
