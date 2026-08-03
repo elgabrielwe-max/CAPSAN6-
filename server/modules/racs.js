@@ -45,13 +45,27 @@ racsRouter.get('/dashboard',requireCapability('rac:view'),async(req,res)=>{
   const byRisk=(await pool.query(`SELECT report_type,risk_level,COUNT(*)::int total FROM racs r WHERE ${where} GROUP BY report_type,risk_level`,params)).rows;
   const byStatus=(await pool.query(`SELECT status name,COUNT(*)::int total FROM racs r WHERE ${where} GROUP BY status ORDER BY total DESC`,params)).rows;
   const byCause=(await pool.query(`SELECT COALESCE(cause_subtype,deviation_type,'OTROS') name,COUNT(*)::int total FROM racs r WHERE ${where} GROUP BY 1 ORDER BY total DESC LIMIT 10`,params)).rows;
-  const bySupervisor=(await pool.query(`SELECT COALESCE(u.name,r.supervisor_name_text,'SIN ASIGNAR') name,COUNT(*)::int total,COUNT(*) FILTER(WHERE r.status='LEVANTADO')::int lifted FROM racs r LEFT JOIN users u ON u.id=r.supervisor_user_id WHERE ${where} GROUP BY 1 ORDER BY total DESC LIMIT 15`,params)).rows;
+  const bySupervisor=(await pool.query(`
+    SELECT name,total,lifted FROM (
+      SELECT u.name,COUNT(DISTINCT r.id)::int total,COUNT(DISTINCT r.id) FILTER(WHERE r.status='LEVANTADO')::int lifted
+      FROM racs r
+      JOIN rac_assignments ra ON ra.rac_id=r.id AND ra.active=TRUE
+      JOIN users u ON u.id=ra.supervisor_user_id AND u.active=TRUE AND u.deleted_at IS NULL
+      WHERE ${where}
+      GROUP BY u.id,u.name
+      UNION ALL
+      SELECT 'SIN ASIGNAR' name,COUNT(*)::int total,COUNT(*) FILTER(WHERE r.status='LEVANTADO')::int lifted
+      FROM racs r
+      WHERE ${where} AND NOT EXISTS(SELECT 1 FROM rac_assignments ra WHERE ra.rac_id=r.id AND ra.active=TRUE)
+    ) supervisor_totals
+    WHERE total>0 ORDER BY total DESC,name LIMIT 15`,params)).rows;
   res.json({kpis:{...k,closurePercent:k.total?Math.round(k.lifted*100/k.total):0},byRisk,byStatus,byCause,bySupervisor});
 });
 
 racsRouter.get('/',requireCapability('rac:view'),async(req,res)=>{
   const {where,params}=buildWhere(req);const limit=Math.min(Number(req.query.limit||300),1000);
-  const rows=(await pool.query(`SELECT r.*,bu.name business_unit,ar.name reporting_area,ad.name reported_area,COALESCE(u.name,r.supervisor_name_text,'SIN ASIGNAR') supervisor_name,
+  const rows=(await pool.query(`SELECT r.*,bu.name business_unit,ar.name reporting_area,ad.name reported_area,
+    COALESCE((SELECT string_agg(su.name, ', ' ORDER BY su.name) FROM rac_assignments sra JOIN users su ON su.id=sra.supervisor_user_id WHERE sra.rac_id=r.id AND sra.active=TRUE AND su.active=TRUE AND su.deleted_at IS NULL),u.name,r.supervisor_name_text,'SIN ASIGNAR') supervisor_name,
     (SELECT COUNT(*)::int FROM rac_evidence e WHERE e.rac_id=r.id) evidence_count
     FROM racs r LEFT JOIN business_units bu ON bu.id=r.business_unit_id LEFT JOIN areas ar ON ar.id=r.reporting_area_id LEFT JOIN areas ad ON ad.id=r.reported_area_id LEFT JOIN users u ON u.id=r.supervisor_user_id WHERE ${where} ORDER BY r.report_date DESC,r.id DESC LIMIT ${limit}`,params)).rows;
   res.json(rows);
@@ -74,6 +88,7 @@ racsRouter.get('/changes',requireCapability('rac:view'),async(req,res)=>{
       OR UPPER(COALESCE(r.description,'')) LIKE $${n}
       OR UPPER(COALESCE(r.cause_subtype,r.deviation_type,'')) LIKE $${n}
       OR UPPER(COALESCE(u.name,r.supervisor_name_text,'')) LIKE $${n}
+      OR EXISTS(SELECT 1 FROM rac_assignments sra JOIN users su ON su.id=sra.supervisor_user_id WHERE sra.rac_id=r.id AND sra.active=TRUE AND UPPER(su.name) LIKE $${n})
     )`);
   }
   const limit=Math.min(Math.max(Number(req.query.limit||200),1),500);
@@ -84,7 +99,7 @@ racsRouter.get('/changes',requireCapability('rac:view'),async(req,res)=>{
       r.location,r.description,r.corrective_action,r.status,r.progress_percent,r.due_date,r.lifted_at,
       r.created_at,r.updated_at,
       bu.name business_unit,ar.name reporting_area,ad.name reported_area,
-      COALESCE(u.name,r.supervisor_name_text,'SIN ASIGNAR') supervisor_name,
+      COALESCE((SELECT string_agg(su.name, ', ' ORDER BY su.name) FROM rac_assignments sra JOIN users su ON su.id=sra.supervisor_user_id WHERE sra.rac_id=r.id AND sra.active=TRUE AND su.active=TRUE AND su.deleted_at IS NULL),u.name,r.supervisor_name_text,'SIN ASIGNAR') supervisor_name,
       COALESCE((
         SELECT MAX(al.created_at)
         FROM audit_log al
@@ -174,16 +189,20 @@ racsRouter.post('/',requireCapability('rac:create'),async(req,res)=>{
   const row=await tx(async client=>{
     const reporting=await areaId(client,b.reportingArea,unitId);const reported=await areaId(client,b.reportedArea||b.reportingArea,unitId);const bu=await unit(client,unitId);if(!bu)throw Object.assign(new Error('Unidad no encontrada'),{status:404});
     const selectedCause=await resolveRacCauseSelection(client,{categoryId:b.causeCategoryId,subtypeId:b.causeSubtypeId,categoryName:b.causeCategory,subtypeName:b.causeSubtype,reportType,fallbackText:description});
+    const unitSupervisors=(await client.query(`SELECT DISTINCT u.id,u.name FROM users u JOIN user_business_units ubu ON ubu.user_id=u.id WHERE ubu.business_unit_id=$1 AND u.role='SUPERVISOR' AND u.active=TRUE AND u.deleted_at IS NULL ORDER BY u.name,u.id`,[unitId])).rows;
+    const primarySupervisor=unitSupervisors[0]||null;
     const prefix=bu.code||'RAC';const sequence=Number((await client.query(`SELECT COUNT(*)::int total FROM racs WHERE business_unit_id=$1 AND report_date=$2`,[unitId,reportDate])).rows[0].total)+1;const code=`${prefix}-${reportDate.replaceAll('-','')}-${String(sequence).padStart(4,'0')}-${crypto.randomBytes(2).toString('hex').toUpperCase()}`;
     const result=await client.query(`INSERT INTO racs(report_code,source_report_number,business_unit_id,reporting_area_id,reported_area_id,reporter_name,reporter_type,location,report_date,risk_level,report_type,deviation_type,cause_category,cause_subtype,description,supervisor_user_id,supervisor_name_text,corrective_action,status,progress_percent,due_date,environmental_flag,environmental_category,environmental_confidence,created_by)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,'PENDIENTE',0,$19,$20,$21,$22,$23) RETURNING *`,[
-      code,clean(b.sourceReportNumber)||null,unitId,reporting,reported,upper(b.reporterName),upper(b.reporterType)||'COLABORADOR',upper(b.location)||null,reportDate,risk,reportType,selectedCause.subtype.name,selectedCause.category.name,selectedCause.subtype.name,description,b.supervisorUserId?Number(b.supervisorUserId):req.user.role==='SUPERVISOR'?req.user.id:null,upper(b.supervisorName) || (req.user.role==='SUPERVISOR' ? req.user.name : null),upper(b.correctiveAction)||null,dueDate(reportDate,risk),Boolean(ai?.environmental||selectedCause.category.code==='VI'),selectedCause.category.code==='VI'?selectedCause.subtype.name:ai?.environmentalCategory||null,ai?.confidence||null,req.user.id]);
+      code,clean(b.sourceReportNumber)||null,unitId,reporting,reported,upper(b.reporterName),upper(b.reporterType)||'COLABORADOR',upper(b.location)||null,reportDate,risk,reportType,selectedCause.subtype.name,selectedCause.category.name,selectedCause.subtype.name,description,primarySupervisor?.id||null,primarySupervisor?.name||null,upper(b.correctiveAction)||null,dueDate(reportDate,risk),Boolean(ai?.environmental||selectedCause.category.code==='VI'),selectedCause.category.code==='VI'?selectedCause.subtype.name:ai?.environmentalCategory||null,ai?.confidence||null,req.user.id]);
     await client.query(`UPDATE racs SET cause_category_id=$1,cause_subtype_id=$2 WHERE id=$3`,[selectedCause.category.id,selectedCause.subtype.id,result.rows[0].id]);
     result.rows[0].cause_category_id=selectedCause.category.id;result.rows[0].cause_subtype_id=selectedCause.subtype.id;
-    if(result.rows[0].supervisor_user_id)await client.query(`INSERT INTO rac_assignments(rac_id,supervisor_user_id,assigned_by,active) VALUES($1,$2,$3,TRUE) ON CONFLICT DO NOTHING`,[result.rows[0].id,result.rows[0].supervisor_user_id,req.user.id]);
-    return result.rows[0];
+    for(const supervisor of unitSupervisors)await client.query(`INSERT INTO rac_assignments(rac_id,supervisor_user_id,assigned_by,active) VALUES($1,$2,$3,TRUE) ON CONFLICT DO NOTHING`,[result.rows[0].id,supervisor.id,req.user.id]);
+    return {...result.rows[0],assigned_supervisor_ids:unitSupervisors.map(item=>Number(item.id)),assigned_supervisor_names:unitSupervisors.map(item=>item.name),assigned_supervisor_count:unitSupervisors.length};
   });
-  await audit(req,'CREATE_RAC','RAC',row.id,{code:row.report_code});if(row.supervisor_user_id&&row.supervisor_user_id!==req.user.id)await notify(row.supervisor_user_id,'Nuevo RAC asignado',`${row.report_code} requiere atención`,'WARN','RAC',row.id);res.json(row);
+  await audit(req,'CREATE_RAC','RAC',row.id,{code:row.report_code,automaticSupervisorAssignment:true,supervisorIds:row.assigned_supervisor_ids});
+  for(const supervisorId of row.assigned_supervisor_ids||[])if(supervisorId!==req.user.id)await notify(supervisorId,'Nuevo RAC de tu unidad',`${row.report_code} fue registrado en una unidad bajo tu responsabilidad`,'WARN','RAC',row.id);
+  res.json(row);
 });
 
 racsRouter.post('/import/analyze',requireCapability('rac:import'),upload.single('file'),asyncRoute(async(req,res)=>{

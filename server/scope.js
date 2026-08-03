@@ -15,6 +15,6 @@ export function parseFilters(query, start=1, alias='r') {
   if(query.status){clauses.push(`${alias}.status=$${i++}`);params.push(query.status);}
   if(query.risk){clauses.push(`${alias}.risk_level=$${i++}`);params.push(query.risk);}
   if(query.reportType){clauses.push(`${alias}.report_type=$${i++}`);params.push(query.reportType);}
-  if(query.supervisorUserId){clauses.push(`COALESCE(${alias}.supervisor_user_id,0)=$${i++}`);params.push(Number(query.supervisorUserId));}
+  if(query.supervisorUserId){clauses.push(`EXISTS(SELECT 1 FROM rac_assignments scope_ra WHERE scope_ra.rac_id=${alias}.id AND scope_ra.supervisor_user_id=$${i++} AND scope_ra.active=TRUE)`);params.push(Number(query.supervisorUserId));}
   return { clause:clauses.length?clauses.join(' AND '):'TRUE',params,next:i };
 }

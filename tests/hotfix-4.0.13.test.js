@@ -16,7 +16,7 @@ test('versión 4.0.14 publicada',async()=>{
   const pkg=JSON.parse(await read('package.json'));
   const app=await read('server/app.js');
   const index=await read('public/index.html');
-  assert.equal(pkg.version,'4.0.14');
-  assert.match(app,/4\.0\.14-HOTFIX-REGISTRO-RAC-SIN-ERROR-RESET/);
-  assert.match(index,/v=4014/);
+  assert.ok(Number(pkg.version.split('.').at(-1))>=15);
+  assert.match(app,/4\.0\.15-ASIGNACION-AUTOMATICA-TODOS-SUPERVISORES-POR-UNIDAD/);
+  assert.match(index,/v=4015/);
 });
