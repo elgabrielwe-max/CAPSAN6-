@@ -20,7 +20,8 @@ test('PPT ejecutivo RACS separa correctamente reporte diario y acumulado',async(
   const report=await read('server/reports/racExecutive.js');
   assert.ok(report.includes('durante el ${info.long}'));
   assert.ok(report.includes('Acumulado del mes: ${two(cumulativeTotal)} RACS.'));
-  assert.ok(report.includes('condiciones de alto potencial / riesgo alto'));
+  assert.ok(report.includes('condiciones de alto potencial'));
+  assert.ok(report.includes("CAPSAN6_WIDE"));
   assert.ok(report.includes('pendingCharts(slide,pendingScopeRows)'));
   assert.ok(report.includes('addDetailSlide(pptx,u,info,detailSource.slice(i*pageSize,(i+1)*pageSize),i+1,totalPages,detailSource)'));
 });

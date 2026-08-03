@@ -35,7 +35,7 @@ test('solo existe un PPT oficial de RACS, sin presentaciones interactivas o grup
 test('las plantillas funcionales y recursos compactos se incluyen en el proyecto',async()=>{
   for(const file of ['templates/FLASH_REPORT_MODELO_OFICIAL.xls','templates/FLASH_REPORT_REFERENCIA.docx','templates/EJEMPLO_BASE_TRABAJADORES.xlsx','templates/assets/optimus-logo.png','templates/assets/optimus-wave-wide.png'])await access(new URL(`../${file}`,import.meta.url));
   const generator=await read('server/reports/racExecutive.js');
-  assert.match(generator,/defineLayout\(\{name:'CAPSAN6_4X3'/);
+  assert.match(generator,/defineLayout\(\{name:'CAPSAN6_WIDE'/);
   assert.match(generator,/U\.E\.A CANDELARIA CHANCA/);
 });
 

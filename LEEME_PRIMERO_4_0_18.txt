@@ -1,0 +1,5 @@
+CAPSAN6 4.0.18
+
+Actualización del PPT Ejecutivo de RACS para copiar la plantilla visual solicitada por Gerencia.
+Suba los archivos conservando sus carpetas y espere el despliegue SUCCESS de Railway.
+Luego actualice CAPSAN6 con Ctrl + F5 y genere nuevamente el PPT Ejecutivo RACS.

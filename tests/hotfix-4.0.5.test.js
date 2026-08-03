@@ -23,7 +23,7 @@ test('lote de importación RACS no reutiliza parámetros con tipos incompatibles
 test('PPT oficial replica los indicadores y gráficos del modelo institucional',async()=>{
   const ppt=await read('server/reports/racExecutive.js');
   for(const token of ['CHARLA DE 5 MINUTOS','REPORTES/TRABAJADOR','SUPERVISORES QUE ENTREGARON RACS','ÁREAS REPORTANTES','RACS LEVANTAMIENTO','MEDIDA CORRECTIVA'])assert.match(ppt,new RegExp(token));
-  assert.match(ppt,/defineLayout\(\{name:'CAPSAN6_4X3',width:10,height:7\.5\}\)/);
+  assert.match(ppt,/defineLayout\(\{name:'CAPSAN6_WIDE',width:13\.333,height:7\.5\}\)/);
   assert.match(ppt,/addSplitChart/);
   assert.match(ppt,/addEvidenceSlides/);
 });
