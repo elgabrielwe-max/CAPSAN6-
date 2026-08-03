@@ -1,0 +1,13 @@
+CAPSAN6 4.0.17 - ACTUALIZACIÓN SOLO DE ARCHIVOS
+
+Este paquete contiene únicamente los archivos modificados para integrar el PPT Ejecutivo exclusivo de RACS.
+
+No borres el proyecto existente. Reemplaza cada archivo respetando su carpeta:
+- package.json
+- server/app.js
+- server/modules/reports.js
+- server/reports/racExecutive.js
+- tests/hotfix-4.0.17.test.js
+- ACTUALIZACION_4_0_17_PPT_EJECUTIVO_RACS_ONLY.md
+
+Después haz commit en GitHub. Railway desplegará automáticamente si está conectado al repositorio.

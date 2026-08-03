@@ -77,7 +77,7 @@ function addCorporateHeader(slide,title){
 function addCover(pptx,period){
   const slide=pptx.addSlide();slide.background={color:C.white};
   slide.addShape('rect',{x:0,y:0,w:10,h:1.15,fill:{color:'F3C18E'},line:{color:'F3C18E'}});if(fs.existsSync(WAVE))slide.addImage({path:WAVE,x:0,y:0.56,w:10,h:0.45,transparency:5});if(fs.existsSync(LOGO))slide.addImage({path:LOGO,x:3.45,y:0.26,w:3.1,h:1.18});
-  slide.addText('SEGURIDAD',{x:2.3,y:2.5,w:5.4,h:0.45,fontFace:'Arial',fontSize:26,bold:true,italic:true,color:C.navy,align:'center',margin:0});
+  slide.addText('REPORTE EJECUTIVO RACS',{x:1.45,y:2.45,w:7.1,h:0.5,fontFace:'Arial',fontSize:25,bold:true,italic:true,color:C.navy,align:'center',margin:0});
   slide.addText('U.E.A CANDELARIA CHANCA',{x:2.1,y:3.28,w:5.8,h:0.3,fontFace:'Arial',fontSize:14,bold:true,color:'C00000',align:'center',margin:0});
   slide.addText(period,{x:2.3,y:4.1,w:5.4,h:0.35,fontFace:'Arial',fontSize:18,bold:true,color:C.navy,align:'center',margin:0});
   slide.addShape('line',{x:0.18,y:7.16,w:9.64,h:0,line:{color:'C00000',pt:1.6}});
@@ -102,10 +102,21 @@ function addPareto(slide,items){
   const list=items.length?items:[{name:'SIN CAUSA REGISTRADA',total:0}];const labels=list.map(i=>i.name);const values=list.map(i=>Number(i.total));const total=values.reduce((a,b)=>a+b,0)||1;let running=0;const cumulative=values.map(v=>{running+=v;return Number((running*100/total).toFixed(1));});
   slide.addChart([{type:'bar',data:[{name:'RACS',labels,values}],options:{barDir:'col',barGrouping:'clustered',chartColors:[C.green],showValue:true,dataLabelPosition:'outEnd'}},{type:'line',data:[{name:'% ACUMULADO',labels,values:cumulative}],options:{secondaryValAxis:true,chartColors:[C.orange],lineSize:2.2,lineDataSymbol:'none',showValue:false}}],{...chartBase(0.78,2.2,8.65,4.45),showLegend:false,catAxisLabelRotate:0,catAxisLabelFontSize:list.length>8?5.5:7,valAxisMinVal:0,valAxisMaxVal:Math.max(2.5,Math.max(...values)+0.5),valAxisMajorUnit:Math.max(0.5,Math.ceil(Math.max(...values)/5)||1),secondaryValAxis:true,secondaryValAxisMinVal:0,secondaryValAxisMaxVal:100,secondaryValAxisMajorUnit:10,secondaryValAxisLabelFormatCode:'0"%"'});
 }
+
+function addExecutiveOverviewSlide(pptx,data,info){
+  const slide=pptx.addSlide();addCorporateHeader(slide,`RESUMEN EJECUTIVO RACS – ${info.period}`);
+  const s=data.summary;const cards=[['TOTAL RACS',s.total,C.orange],['ACTOS',s.acts,C.act],['CONDICIONES',s.conditions,C.condition],['ALTO POTENCIAL',s.high,C.red],['PENDIENTES',s.pending,C.red],['% LEV.',`${s.closurePercent}%`,C.green]];
+  cards.forEach(([label,value,color],i)=>{const x=0.35+i*1.58;slide.addShape('rect',{x,y:1.0,w:1.35,h:0.36,fill:{color},line:{color}});slide.addText(label,{x:x+0.04,y:1.1,w:1.27,h:0.12,fontFace:'Arial',fontSize:6.8,bold:true,color:C.white,align:'center',margin:0,fit:'shrink'});slide.addShape('rect',{x,y:1.36,w:1.35,h:0.62,fill:{color:'F2F2F2'},line:{color:'BFBFBF',pt:0.5}});slide.addText(String(value),{x:x+0.04,y:1.52,w:1.27,h:0.24,fontFace:'Arial',fontSize:17,bold:true,color:C.ink,align:'center',margin:0,fit:'shrink'});});
+  const rows=[[{text:'UNIDAD',options:{bold:true,fill:{color:C.navy},color:C.white}},{text:'PERSONAL',options:{bold:true,fill:{color:C.navy},color:C.white,align:'center'}},{text:'RACS',options:{bold:true,fill:{color:C.navy},color:C.white,align:'center'}},{text:'ACTOS',options:{bold:true,fill:{color:C.navy},color:C.white,align:'center'}},{text:'COND.',options:{bold:true,fill:{color:C.navy},color:C.white,align:'center'}},{text:'ALTO',options:{bold:true,fill:{color:C.navy},color:C.white,align:'center'}},{text:'LEV.',options:{bold:true,fill:{color:C.navy},color:C.white,align:'center'}},{text:'PEND.',options:{bold:true,fill:{color:C.navy},color:C.white,align:'center'}},{text:'% LEV.',options:{bold:true,fill:{color:C.navy},color:C.white,align:'center'}}],...data.units.map((u,idx)=>{const fill=idx%2?'FFFFFF':'D9E2F3';return[dataCell(displayUnit(u.name),fill,{bold:true}),dataCell(u.workers,fill,{align:'center'}),dataCell(u.total,fill,{align:'center'}),dataCell(u.acts,fill,{align:'center'}),dataCell(u.conditions,fill,{align:'center'}),dataCell(u.high,fill,{align:'center',color:u.high?C.red:C.ink,bold:!!u.high}),dataCell(u.lifted,fill,{align:'center'}),dataCell(u.pending,fill,{align:'center',color:u.pending?C.red:C.ink,bold:!!u.pending}),dataCell(`${u.closurePercent}%`,fill,{align:'center',bold:true})];})];
+  slide.addTable(rows,{x:0.35,y:2.25,w:9.25,h:Math.min(3.1,0.36+data.units.length*0.34),colW:[2.0,0.8,0.65,0.65,0.65,0.65,0.65,0.65,0.75],rowH:0.34,fontFace:'Arial',fontSize:7.2,border:{type:'solid',color:'9FBAD0',pt:0.45},margin:0.02,fill:C.white,color:C.ink});
+  const pendingByUnit=data.units.filter(u=>u.pending>0).sort((a,b)=>b.pending-a.pending).slice(0,8);const causeMap=new Map();for(const u of data.units)for(const r of u.rows.filter(x=>text(x.status).toUpperCase()!=='LEVANTADO')){const name=text(r.cause_subtype||r.deviation_type)||'OTROS';causeMap.set(name,(causeMap.get(name)||0)+1);}const pendingCauses=[...causeMap.entries()].map(([name,total])=>({name,total})).sort((a,b)=>b.total-a.total).slice(0,8);
+  addSplitChart(slide,'PENDIENTES POR UNIDAD',pendingByUnit.map(u=>({name:displayUnit(u.name),total:u.pending,conditions:u.pending,acts:0})),0.4,5.75,4.25,1.35);addSplitChart(slide,'PENDIENTES POR DESVIACIÓN',pendingCauses.map(c=>({name:c.name,total:c.total,conditions:c.total,acts:0})),5.1,5.75,4.5,1.35);
+}
+
 function addUnitSummarySlide(pptx,u,info){
   const slide=pptx.addSlide();addCorporateHeader(slide,`RACS ${displayUnit(u.name)}– ${info.period}`);addUnitMetrics(slide,u);
   const sentence=u.acts&&u.conditions?`Se registraron ${two(u.total)} reportes RACS (${two(u.acts)} actos y ${two(u.conditions)} condiciones)`:u.acts?`Se registraron ${two(u.total)} reportes RACS (${two(u.acts)} actos)`:`Se registraron ${two(u.total)} reportes RACS (${two(u.conditions)} condiciones)`;
-  slide.addShape('rect',{x:4.15,y:0.98,w:5.35,h:0.95,fill:{color:C.orange},line:{color:C.orange}});slide.addText([{text:`•  ${sentence}`,options:{breakLine:true}},{text:`•  Se reportaron ${two(u.total)} RACS hasta la fecha ${info.long}.`,options:{breakLine:true}}],{x:4.3,y:1.13,w:5.05,h:0.58,fontFace:'Arial',fontSize:10.5,bold:true,color:C.white,margin:0.02,fit:'shrink'});addPareto(slide,u.causes);
+  slide.addShape('rect',{x:4.15,y:0.98,w:5.35,h:1.12,fill:{color:C.orange},line:{color:C.orange}});slide.addText([{text:`•  ${sentence}`,options:{breakLine:true}},{text:`•  ${two(u.high)} condiciones de alto potencial / riesgo alto.`,options:{breakLine:true}},{text:`•  Acumulado al ${info.long}: ${two(u.total)} RACS.`,options:{breakLine:true}}],{x:4.3,y:1.12,w:5.05,h:0.78,fontFace:'Arial',fontSize:10.2,bold:true,color:C.white,margin:0.02,fit:'shrink'});addPareto(slide,u.causes);
 }
 function addSplitChart(slide,title,items,x,y,w,h){
   slide.addShape('rect',{x,y:y-0.47,w,h:0.42,fill:{color:C.orange},line:{color:C.orange}});slide.addText(title,{x:x+0.08,y:y-0.36,w:w-0.16,h:0.23,fontFace:'Arial',fontSize:10.5,bold:true,color:C.white,margin:0,fit:'shrink'});
@@ -113,16 +124,16 @@ function addSplitChart(slide,title,items,x,y,w,h){
   const series=[];if(items.some(i=>i.conditions))series.push({name:'CONDICION SUBESTANDAR',labels:items.map(i=>i.name),values:items.map(i=>i.conditions)});if(items.some(i=>i.acts))series.push({name:'ACTO SUBESTANDAR',labels:items.map(i=>i.name),values:items.map(i=>i.acts)});
   slide.addChart('bar',series,{...chartBase(x+0.32,y+0.25,w-0.55,h-0.35),barDir:'col',barGrouping:'clustered',chartColors:[C.condition,C.act],showLegend:true,legendPos:'r',legendFontSize:7.5,catAxisLabelFontSize:7.5,catAxisLabelRotate:0,dataLabelPosition:'ctr',showValue:true,valAxisMinVal:0,valAxisMaxVal:Math.max(4,Math.max(...items.map(i=>i.total))+1),valAxisMajorUnit:1});
 }
-function splitNarrative(daily,info){
+function splitNarrative(daily,info,cumulativeTotal=0){
   const typeText=daily.acts&&daily.conditions?`${two(daily.conditions)} condiciones y ${two(daily.acts)} actos`:daily.acts?`${two(daily.acts)} actos`:`${two(daily.conditions)} condiciones`;
   const highText=daily.high?`de los cuales ${two(daily.high)} ${daily.high===1?'condición':'condiciones'} de alto potencial`:'de los cuales no se reportaron condiciones de alto potencial';
-  return[`Se reportaron ${typeText} ${highText}`,`Se reportaron ${two(daily.total)} RACS hasta la fecha ${info.long}.`];
+  return[`Se reportaron ${typeText} ${highText} durante el ${info.long}.`,`Acumulado del mes: ${two(cumulativeTotal)} RACS.`];
 }
 function addUnitSplitSlide(pptx,u,info){
   const dailyRows=rowsForDate(u.rows,info.iso);const daily=summarizeUnitRows(dailyRows,u.workers,u.name);const slide=pptx.addSlide();addCorporateHeader(slide,`RACS ${displayUnit(u.name)}– ${info.period}`);
   slide.addShape('line',{x:4.5,y:0.86,w:0,h:5.02,line:{color:C.orange,pt:2,dash:'dash'}});slide.addShape('line',{x:0,y:5.87,w:10,h:0,line:{color:C.orange,pt:2,dash:'dash'}});
   addSplitChart(slide,`SUPERVISORES QUE ENTREGARON RACS EL ${info.long}`,daily.supervisors,0.18,1.38,4.15,4.2);addSplitChart(slide,`ÁREAS REPORTANTES DEL ${info.long}`,daily.areas,4.65,1.38,5.12,4.2);
-  slide.addShape('rect',{x:0.42,y:6.08,w:8.35,h:1.0,fill:{color:C.orange},line:{color:C.orange}});slide.addText(splitNarrative(daily,info).map(t=>({text:`•  ${t}`,options:{breakLine:true}})),{x:0.64,y:6.35,w:7.95,h:0.55,fontFace:'Arial',fontSize:10.5,bold:true,color:C.white,margin:0.02,fit:'shrink'});
+  slide.addShape('rect',{x:0.42,y:6.08,w:8.35,h:1.0,fill:{color:C.orange},line:{color:C.orange}});slide.addText(splitNarrative(daily,info,u.total).map(t=>({text:`•  ${t}`,options:{breakLine:true}})),{x:0.64,y:6.35,w:7.95,h:0.55,fontFace:'Arial',fontSize:10.5,bold:true,color:C.white,margin:0.02,fit:'shrink'});
 }
 function riskCell(value,fill){const v=text(value).toUpperCase();const color=v==='ALTO'?C.red:v==='MEDIO'?C.yellow:C.low;return{text:v,options:{fill:{color},color:v==='MEDIO'?C.ink:C.white,bold:false,align:'center'}};}
 function typeCell(value,fill){return{text:text(value).toUpperCase(),options:{fill:{color:fill},color:C.blue,bold:true,align:'center'}};}
@@ -137,11 +148,11 @@ function pendingCharts(slide,rows){
   const cols=Math.max(1,locations.length);slide.addTable([[{text:dominant.name,options:{align:'center',bold:false}},{text:'',options:{align:'center'}}],...locations.map(item=>[{text:item.name,options:{align:'center'}},{text:String(item.total),options:{align:'center'}}])],{x:0.65,y:6.1,w:4.55,h:0.88,colW:[3.8,0.75],rowH:0.22,fontFace:'Arial',fontSize:6.2,border:{type:'solid',color:'D9D9D9',pt:0.4},margin:0.01,fill:C.white,color:'666666'});
   slide.addChart('pie',[{name:'NO',labels:causes.map(c=>c.name),values:causes.map(c=>c.total)}],{x:5.5,y:4.35,w:3.85,h:2.55,showTitle:false,showLegend:true,legendPos:'r',legendFontSize:8,showPercent:false,showValue:true,chartColors:['4472C4','ED7D31','A5A5A5','FFC000','5B9BD5','70AD47','264478']});
 }
-function addDetailSlide(pptx,u,info,rows,pageIndex,totalPages){
+function addDetailSlide(pptx,u,info,rows,pageIndex,totalPages,pendingScopeRows=rows){
   const slide=pptx.addSlide();addCorporateHeader(slide,`RACS LEVANTAMIENTO ${displayUnit(u.name)}– ${info.short}${totalPages>1?` · ${pageIndex}/${totalPages}`:''}`);
   const header=['AREA REPORTANTE','DATOS DEL REPORTANTE','LUGAR DE REPORTE','AREA REPORTADA','FECHA','NIVEL DE RIESGO','TIPO DE REPORTE','TIPO DE DESVIACION','DESCRIPCION DEL RAC´S','SUPERVISOR ACARGO DE LA ENTREGA','% LEVANTAMIENTO'];
   slide.addTable([header,...detailRows(rows)],{x:0.08,y:0.92,w:9.82,h:3.1,colW:[0.56,0.63,0.62,0.58,0.45,0.47,0.75,0.96,2.95,1.1,0.45],rowH:0.44,fontFace:'Arial',fontSize:5.3,border:{type:'solid',color:'9FBAD0',pt:0.45},fill:C.white,color:C.ink,margin:0.012,autoFit:false,bold:false,bandRow:false});
-  pendingCharts(slide,rowsForDate(u.rows,info.iso));
+  pendingCharts(slide,pendingScopeRows);
 }
 function addEvidenceSlides(pptx,u){
   const candidates=u.rows.filter(r=>Array.isArray(r.evidence_files)&&r.evidence_files.some(f=>f.local_path&&fs.existsSync(f.local_path))).slice(0,6);
@@ -149,9 +160,9 @@ function addEvidenceSlides(pptx,u){
 }
 
 export async function buildRacExecutivePpt(rows,filtersLabel,workerCounts={},context={}){
-  const data=summarizeRacs(rows,workerCounts),info=periodContext(rows,context);const pptx=new pptxgen();pptx.defineLayout({name:'CAPSAN6_4X3',width:10,height:7.5});pptx.layout='CAPSAN6_4X3';pptx.author='CAPSAN6';pptx.subject='Reporte Diario de Seguridad';pptx.title='Reporte Diario de Seguridad';pptx.company='OPTIMUS';pptx.lang='es-PE';pptx.theme={headFontFace:'Arial',bodyFontFace:'Arial',lang:'es-PE'};
-  addCover(pptx,info.period);addTrainingSlide(pptx,context.trainingCalendar||[],info,data.units);
-  for(const u of data.units){addUnitSummarySlide(pptx,u,info);addUnitSplitSlide(pptx,u,info);const dailyRows=rowsForDate(u.rows,info.iso);const detailSource=dailyRows.length?dailyRows:u.rows;const pageSize=6,totalPages=Math.max(1,Math.ceil(detailSource.length/pageSize));for(let i=0;i<totalPages;i++)addDetailSlide(pptx,u,info,detailSource.slice(i*pageSize,(i+1)*pageSize),i+1,totalPages);addEvidenceSlides(pptx,u);}
+  const data=summarizeRacs(rows,workerCounts),info=periodContext(rows,context);const pptx=new pptxgen();pptx.defineLayout({name:'CAPSAN6_4X3',width:10,height:7.5});pptx.layout='CAPSAN6_4X3';pptx.author='CAPSAN6';pptx.subject='Reporte Ejecutivo RACS';pptx.title='Reporte Ejecutivo RACS';pptx.company='OPTIMUS';pptx.lang='es-PE';pptx.theme={headFontFace:'Arial',bodyFontFace:'Arial',lang:'es-PE'};
+  addCover(pptx,info.period);addExecutiveOverviewSlide(pptx,data,info);
+  for(const u of data.units){addUnitSummarySlide(pptx,u,info);addUnitSplitSlide(pptx,u,info);const dailyRows=rowsForDate(u.rows,info.iso);const detailSource=dailyRows.length?dailyRows:u.rows;const pageSize=6,totalPages=Math.max(1,Math.ceil(detailSource.length/pageSize));for(let i=0;i<totalPages;i++)addDetailSlide(pptx,u,info,detailSource.slice(i*pageSize,(i+1)*pageSize),i+1,totalPages,detailSource);addEvidenceSlides(pptx,u);}
   addClosing(pptx);return pptx.write({outputType:'nodebuffer'});
 }
 

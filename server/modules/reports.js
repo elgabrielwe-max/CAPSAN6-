@@ -67,9 +67,9 @@ reportsRouter.get('/racs/executive.xlsx',asyncRoute(async(req,res)=>{
   await audit(req,'DOWNLOAD_RAC_EXECUTIVE_EXCEL','REPORT',null,{rows:rows.length});res.setHeader('content-type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');res.setHeader('content-disposition','attachment; filename="CAPSAN6_REPORTE_EJECUTIVO_RACS.xlsx"');res.send(Buffer.from(buffer));
 }));
 reportsRouter.get('/racs/executive.pptx',asyncRoute(async(req,res)=>{
-  const rows=await reportRows(req.query,req.user);const period=reportPeriod(rows,req.query);const context={...period,trainingCalendar:await trainingCalendar(req.user,req.query,rows)};
+  const rows=await reportRows(req.query,req.user);const period=reportPeriod(rows,req.query);const context={...period};
   const buffer=await buildRacExecutivePpt(rows,await label(req.query),await workerCounts(req.user),context);
-  await audit(req,'DOWNLOAD_RAC_EXECUTIVE_PPT','REPORT',null,{rows:rows.length,format:'MODELO_OPTIMUS'});res.setHeader('content-type','application/vnd.openxmlformats-officedocument.presentationml.presentation');res.setHeader('content-disposition','attachment; filename="REPORTE_DIARIO_DE_SEGURIDAD_CAPSAN6.pptx"');res.send(Buffer.from(buffer));
+  await audit(req,'DOWNLOAD_RAC_EXECUTIVE_PPT','REPORT',null,{rows:rows.length,format:'RACS_ONLY_GERENCIA'});res.setHeader('content-type','application/vnd.openxmlformats-officedocument.presentationml.presentation');res.setHeader('content-disposition','attachment; filename="CAPSAN6_REPORTE_EJECUTIVO_RACS.pptx"');res.send(Buffer.from(buffer));
 }));
 
 async function trainingData(user,query={}){
