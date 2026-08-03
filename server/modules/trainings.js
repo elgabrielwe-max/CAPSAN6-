@@ -13,12 +13,19 @@ trainingsRouter.use(authRequired);
 
 const clean=v=>String(v||'').trim().replace(/\s+/g,' ');
 const upper=v=>clean(v).toUpperCase();
-const resultFor=(score,min)=>Number(score)>=Number(min)?'APROBADO':'DESAPROBADO';
+const resultFor=(score,min)=>Number(score)>=Number(min||16)?'APROBADO':'DESAPROBADO';
 const isPdf=file=>file&&(file.mimetype==='application/pdf'||/\.pdf$/i.test(file.originalname||''));
 
 async function getTraining(id){return (await pool.query(`SELECT * FROM trainings WHERE id=$1`,[Number(id)])).rows[0];}
+async function targetScope(trainingId,unitId){
+  const rows=(await pool.query(`SELECT area_id FROM training_targets WHERE training_id=$1::int AND business_unit_id=$2::int ORDER BY area_id NULLS FIRST`,[Number(trainingId),Number(unitId)])).rows;
+  return {exists:rows.length>0,unitWide:rows.some(row=>row.area_id===null),areaIds:rows.filter(row=>row.area_id!==null).map(row=>Number(row.area_id))};
+}
 async function assertTarget(trainingId,unitId,areaId){
-  return (await pool.query(`SELECT 1 FROM training_targets WHERE training_id=$1 AND business_unit_id=$2 AND (area_id IS NULL OR area_id=$3::int)`,[Number(trainingId),Number(unitId),areaId?Number(areaId):null])).rowCount>0;
+  const scope=await targetScope(trainingId,unitId);
+  if(!scope.exists)return false;
+  if(scope.unitWide)return true;
+  return areaId?scope.areaIds.includes(Number(areaId)):scope.areaIds.length>0;
 }
 
 trainingsRouter.get('/',requireCapability('training:grade'),async(req,res)=>{
@@ -36,8 +43,8 @@ trainingsRouter.post('/',requireCapability('training:manage'),async(req,res)=>{
   for(const t of targets)if(!assertUnitAccess(req.user,t.businessUnitId))return res.status(403).json({error:'Unidad fuera de tu alcance'});
   const training=await tx(async client=>{
     let row;
-    if(id){row=(await client.query(`UPDATE trainings SET title=$1,description=$2,evaluation_topic=$3,start_date=$4,end_date=$5,approved_min=$6,score_min=$7,score_max=$8,status=$9,enabled=$10 WHERE id=$11 RETURNING *`,[title,clean(req.body.description)||null,upper(req.body.evaluationTopic)||null,req.body.startDate||null,req.body.endDate||null,Number(req.body.approvedMin||11),Number(req.body.scoreMin||0),Number(req.body.scoreMax||20),upper(req.body.status)||'PROGRAMADO',req.body.enabled!==false,Number(id)])).rows[0];}
-    else{row=(await client.query(`INSERT INTO trainings(title,description,evaluation_topic,start_date,end_date,approved_min,failed_max,score_min,score_max,status,enabled,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,[title,clean(req.body.description)||null,upper(req.body.evaluationTopic)||null,req.body.startDate||null,req.body.endDate||null,Number(req.body.approvedMin||11),Number(req.body.approvedMin||11)-0.01,Number(req.body.scoreMin||0),Number(req.body.scoreMax||20),upper(req.body.status)||'PROGRAMADO',req.body.enabled!==false,req.user.id])).rows[0];}
+    if(id){row=(await client.query(`UPDATE trainings SET title=$1,description=$2,evaluation_topic=$3,start_date=$4,end_date=$5,approved_min=$6,score_min=$7,score_max=$8,status=$9,enabled=$10 WHERE id=$11 RETURNING *`,[title,clean(req.body.description)||null,upper(req.body.evaluationTopic)||null,req.body.startDate||null,req.body.endDate||null,Number(req.body.approvedMin||16),Number(req.body.scoreMin||0),Number(req.body.scoreMax||20),upper(req.body.status)||'PROGRAMADO',req.body.enabled!==false,Number(id)])).rows[0];}
+    else{row=(await client.query(`INSERT INTO trainings(title,description,evaluation_topic,start_date,end_date,approved_min,failed_max,score_min,score_max,status,enabled,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,[title,clean(req.body.description)||null,upper(req.body.evaluationTopic)||null,req.body.startDate||null,req.body.endDate||null,Number(req.body.approvedMin||16),Number(req.body.approvedMin||16)-0.01,Number(req.body.scoreMin||0),Number(req.body.scoreMax||20),upper(req.body.status)||'PROGRAMADO',req.body.enabled!==false,req.user.id])).rows[0];}
     await client.query(`DELETE FROM training_targets WHERE training_id=$1`,[row.id]);
     for(const target of targets)await client.query(`INSERT INTO training_targets(training_id,business_unit_id,area_id) VALUES($1,$2,$3) ON CONFLICT DO NOTHING`,[row.id,Number(target.businessUnitId),target.areaId?Number(target.areaId):null]);
     return row;
@@ -49,16 +56,21 @@ trainingsRouter.get('/:id/roster',requireCapability('training:grade'),async(req,
   const id=Number(req.params.id);const training=await getTraining(id);if(!training)return res.status(404).json({error:'Capacitación no encontrada'});
   const unitId=Number(req.query.businessUnitId);if(!assertUnitAccess(req.user,unitId))return res.status(403).json({error:'Unidad fuera de tu alcance'});
   const areaId=req.query.areaId?Number(req.query.areaId):null;
-  if(!(await assertTarget(id,unitId,areaId)))return res.status(400).json({error:'El tema no está asignado a esa unidad/área'});
-  const params=[id,unitId];let areaClause='';if(areaId){params.push(areaId);areaClause=`AND w.area_id=$3`;}
-  const rows=(await pool.query(`SELECT w.id,w.dni,w.full_name,a.name area,w.position,w.guard,g.score,g.result,g.attendance_status,g.observation FROM workers w JOIN areas a ON a.id=w.area_id LEFT JOIN grades g ON g.worker_id=w.id AND g.training_id=$1 WHERE w.active=TRUE AND w.business_unit_id=$2 ${areaClause} ORDER BY a.name,w.full_name`,params)).rows;
-  res.json({training,workers:rows});
+  const scope=await targetScope(id,unitId);
+  if(!scope.exists)return res.status(400).json({error:'El tema no está asignado a la unidad seleccionada'});
+  if(areaId&&!scope.unitWide&&!scope.areaIds.includes(areaId))return res.status(400).json({error:'El área no forma parte de la asignación del tema'});
+  const params=[id,unitId];let areaClause='';
+  if(areaId){params.push(areaId);areaClause=`AND w.area_id=$3::int`;}
+  else if(!scope.unitWide){params.push(scope.areaIds);areaClause=`AND w.area_id=ANY($3::int[])`;}
+  const rows=(await pool.query(`SELECT w.id,w.dni,w.full_name,a.name area,w.position,w.guard,g.score,g.result,g.attendance_status,g.observation FROM workers w JOIN areas a ON a.id=w.area_id LEFT JOIN grades g ON g.worker_id=w.id AND g.training_id=$1::int WHERE w.active=TRUE AND w.business_unit_id=$2::int ${areaClause} ORDER BY a.name,w.full_name`,params)).rows;
+  res.json({training,workers:rows,targetScope:{unitWide:scope.unitWide,areaIds:scope.areaIds}});
 });
 
 trainingsRouter.get('/:id/attendance-files',requireCapability('training:grade'),async(req,res)=>{
   const trainingId=Number(req.params.id),unitId=Number(req.query.businessUnitId),areaId=req.query.areaId?Number(req.query.areaId):null;
   if(!(await getTraining(trainingId)))return res.status(404).json({error:'Capacitación no encontrada'});
   if(!assertUnitAccess(req.user,unitId))return res.status(403).json({error:'Unidad fuera de tu alcance'});
+  if(!(await assertTarget(trainingId,unitId,areaId)))return res.status(400).json({error:'El tema no está asignado a esa unidad/área'});
   const rows=(await pool.query(`SELECT taf.id,taf.training_id,taf.business_unit_id,taf.area_id,taf.created_at,fa.id file_asset_id,fa.original_name,fa.mime_type,fa.size_bytes,fa.drive_status,fa.drive_web_link,u.name uploaded_by_name
     FROM training_attendance_files taf JOIN file_assets fa ON fa.id=taf.file_asset_id LEFT JOIN users u ON u.id=taf.uploaded_by
     WHERE taf.training_id=$1 AND taf.business_unit_id=$2 AND ($3::int IS NULL OR taf.area_id=$3::int)
@@ -113,6 +125,6 @@ function value(row,names){const set=new Set(names.map(h));for(const [k,v] of Obj
 trainingsRouter.post('/import/topics',requireCapability('training:manage'),upload.single('file'),async(req,res)=>{
   if(!req.file)return res.status(400).json({error:'Selecciona un Excel'});
   const wb=XLSX.read(req.file.buffer,{type:'buffer',cellDates:true});const rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{defval:''});let inserted=0,rejected=0;
-  await tx(async client=>{for(const row of rows){const title=upper(value(row,['TEMA','CAPACITACION','TITULO']));const unitName=upper(value(row,['UNIDAD','UNIDAD DE NEGOCIO']));const areaName=upper(value(row,['AREA','ÁREA']));if(!title||!unitName){rejected++;continue;}const unit=(await client.query(`SELECT id FROM business_units WHERE UPPER(name)=UPPER($1)`,[unitName])).rows[0];if(!unit){rejected++;continue;}let area=null;if(areaName)area=(await client.query(`INSERT INTO areas(name) VALUES($1) ON CONFLICT(name) DO UPDATE SET active=TRUE RETURNING id`,[areaName])).rows[0];const training=(await client.query(`INSERT INTO trainings(title,description,evaluation_topic,start_date,end_date,approved_min,status,enabled,created_by) VALUES($1,$2,$3,$4,$5,$6,'PROGRAMADO',TRUE,$7) RETURNING id`,[title,clean(value(row,['DESCRIPCION','CONTENIDO']))||null,upper(value(row,['EVALUACION','PREGUNTA']))||null,value(row,['FECHA INICIO','INICIO'])||null,value(row,['FECHA FIN','FIN'])||null,Number(value(row,['NOTA APROBATORIA','APROBADO'])||11),req.user.id])).rows[0];await client.query(`INSERT INTO training_targets(training_id,business_unit_id,area_id) VALUES($1,$2,$3) ON CONFLICT DO NOTHING`,[training.id,unit.id,area?.id||null]);inserted++;}});
+  await tx(async client=>{for(const row of rows){const title=upper(value(row,['TEMA','CAPACITACION','TITULO']));const unitName=upper(value(row,['UNIDAD','UNIDAD DE NEGOCIO']));const areaName=upper(value(row,['AREA','ÁREA']));if(!title||!unitName){rejected++;continue;}const unit=(await client.query(`SELECT id FROM business_units WHERE UPPER(name)=UPPER($1)`,[unitName])).rows[0];if(!unit){rejected++;continue;}let area=null;if(areaName)area=(await client.query(`INSERT INTO areas(name) VALUES($1) ON CONFLICT(name) DO UPDATE SET active=TRUE RETURNING id`,[areaName])).rows[0];const training=(await client.query(`INSERT INTO trainings(title,description,evaluation_topic,start_date,end_date,approved_min,status,enabled,created_by) VALUES($1,$2,$3,$4,$5,$6,'PROGRAMADO',TRUE,$7) RETURNING id`,[title,clean(value(row,['DESCRIPCION','CONTENIDO']))||null,upper(value(row,['EVALUACION','PREGUNTA']))||null,value(row,['FECHA INICIO','INICIO'])||null,value(row,['FECHA FIN','FIN'])||null,Number(value(row,['NOTA APROBATORIA','APROBADO'])||16),req.user.id])).rows[0];await client.query(`INSERT INTO training_targets(training_id,business_unit_id,area_id) VALUES($1,$2,$3) ON CONFLICT DO NOTHING`,[training.id,unit.id,area?.id||null]);inserted++;}});
   await audit(req,'IMPORT_TRAINING_TOPICS','TRAINING_IMPORT',req.file.originalname,{inserted,rejected});res.json({inserted,rejected,total:rows.length});
 });

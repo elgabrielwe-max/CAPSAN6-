@@ -22,7 +22,10 @@ export async function racOperationsPage(root){let currentTab='import';root.inner
       const a=await api('/api/racs/import/analyze',{method:'POST',body:fd});
       const warnings=(a.warnings||[]).map(w=>`<div class="alert warn">${escapeHtml(w)}</div>`).join('');
       const errors=(a.errors||[]).slice(0,8).map(w=>`<div class="alert danger">${escapeHtml(w)}</div>`).join('');
-      $('#importResult').innerHTML=`<div class="alert ok">${a.validRows} RACS válidos · Periodo ${escapeHtml(a.dominantPeriod||'sin fecha')} · ${a.repeatedNumbers||0} números repetidos conservados.</div>${warnings}${errors}<div class="actions"><button class="btn amber" id="commitImport">Confirmar e importar ${a.validRows} RACS a la base central</button></div><div id="commitImportStatus"></div>${table(['Código interno','N° origen','Fecha','Área','Lugar','Riesgo','Causa','Estado'],(a.records||[]).map(r=>`<tr><td>${escapeHtml(r.internalCode)}</td><td>${escapeHtml(r.sourceReportNumber)}</td><td>${r.reportDate}</td><td>${escapeHtml(r.reportingArea)}</td><td>${escapeHtml(r.location)}</td><td>${escapeHtml(r.riskLevel)}</td><td>${escapeHtml(r.causeSubtype)}</td><td>${escapeHtml(r.status)}</td></tr>`))}`;
+      const periodOptions=(a.periods||[]).map(item=>`<option value="${item.period}">${escapeHtml(item.period)} · ${item.total} RACS</option>`).join('');
+      const periodControl=(a.periods||[]).length>1?`<div class="panel import-period-choice"><h4>El archivo contiene varios periodos</h4><div class="form-grid two"><div class="field"><label>Modo de importación</label><select id="importPeriodMode"><option value="ALL">Importar todos los periodos</option><option value="DOMINANT">Importar solo el mes dominante (${escapeHtml(a.dominantPeriod)})</option><option value="PERIOD">Importar un periodo específico</option></select></div><div class="field"><label>Periodo específico</label><select id="importSelectedPeriod" disabled>${periodOptions}</select></div></div></div>`:'';
+      $('#importResult').innerHTML=`<div class="alert ok">${a.validRows} RACS válidos · Periodo dominante ${escapeHtml(a.dominantPeriod||'sin fecha')} · ${a.repeatedNumbers||0} números repetidos conservados.</div>${warnings}${errors}${periodControl}<div class="actions"><button class="btn amber" id="commitImport">Confirmar e importar ${a.validRows} RACS a la base central</button></div><div id="commitImportStatus"></div>${table(['Código interno','N° origen','Fecha','Área','Lugar','Riesgo','Causa','Estado'],(a.records||[]).map(r=>`<tr><td>${escapeHtml(r.internalCode)}</td><td>${escapeHtml(r.sourceReportNumber)}</td><td>${r.reportDate}</td><td>${escapeHtml(r.reportingArea)}</td><td>${escapeHtml(r.location)}</td><td>${escapeHtml(r.riskLevel)}</td><td>${escapeHtml(r.causeSubtype)}</td><td>${escapeHtml(r.status)}</td></tr>`))}`;
+      if($('#importPeriodMode'))$('#importPeriodMode').onchange=()=>{$('#importSelectedPeriod').disabled=$('#importPeriodMode').value!=='PERIOD';};
       const commitButton=$('#commitImport');
       commitButton.onclick=async()=>{
         commitButton.disabled=true;
@@ -30,6 +33,8 @@ export async function racOperationsPage(root){let currentTab='import';root.inner
         const fd2=new FormData();
         fd2.append('file',selectedFile);
         fd2.append('businessUnitId',selectedUnitId);
+        fd2.append('periodMode',$('#importPeriodMode')?.value||'ALL');
+        if($('#importSelectedPeriod'))fd2.append('selectedPeriod',$('#importSelectedPeriod').value);
         try{
           const r=await api('/api/racs/import',{method:'POST',body:fd2});
           $('#commitImportStatus').innerHTML=`<div class="alert ok"><b>Importación confirmada en la base central.</b><br>${r.inserted} nuevos · ${r.updated} actualizados · ${r.verified} verificados en PostgreSQL · ${r.periodTotal} RACS de ${escapeHtml(r.period||'este periodo')} en la unidad.</div><div class="actions"><button class="btn primary" id="openCentralDashboard">Abrir Dashboard RACS</button><button class="btn ghost" id="openCentralList">Abrir listado para levantamiento</button></div>`;

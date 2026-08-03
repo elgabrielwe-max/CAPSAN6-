@@ -109,6 +109,17 @@ racsRouter.post('/import',requireCapability('rac:import'),upload.single('file'),
 
   const analysis=analyzeRacWorkbook(req.file.buffer,req.file.originalname,{businessUnitName:bu.name,unitCode:bu.code});
   if(!analysis.validRows)return res.status(400).json({error:'El archivo no contiene RACS válidos para importar',details:analysis.errors.slice(0,20)});
+  const periodMode=upper(req.body.periodMode)||'ALL';
+  const selectedPeriod=clean(req.body.selectedPeriod)||analysis.dominantPeriod;
+  let importRecords=analysis.records;
+  if(periodMode==='DOMINANT')importRecords=analysis.records.filter(record=>record.reportDate.startsWith(`${analysis.dominantPeriod}-`));
+  if(periodMode==='PERIOD'){
+    if(!/^\d{4}-\d{2}$/.test(selectedPeriod))return res.status(400).json({error:'Selecciona un periodo válido para importar'});
+    importRecords=analysis.records.filter(record=>record.reportDate.startsWith(`${selectedPeriod}-`));
+  }
+  if(!importRecords.length)return res.status(400).json({error:'No existen RACS válidos en el periodo seleccionado'});
+  const importedPeriods=[...new Set(importRecords.map(record=>record.reportDate.slice(0,7)))];
+  const detectedPeriod=importedPeriods.length===1?importedPeriods[0]:'MULTIPERIODO';
 
   const summary=await tx(async client=>{
     const batch=(await client.query(`
@@ -120,9 +131,9 @@ racsRouter.post('/import',requireCapability('rac:import'),upload.single('file'),
       VALUES($1::text,$2::text,$3::int,$4::int,$4::int,$5::varchar,$6::int,$6::int,$7::int,$8::int,$8::int,'PROCESANDO',$9::jsonb)
       RETURNING id
     `,[
-      req.file.originalname,req.file.originalname,bu.id,req.user.id,analysis.dominantPeriod,
-      analysis.totalRows,analysis.validRows,analysis.errors.length,
-      JSON.stringify({periods:analysis.periods,warnings:analysis.warnings})
+      req.file.originalname,req.file.originalname,bu.id,req.user.id,detectedPeriod,
+      analysis.totalRows,importRecords.length,analysis.errors.length,
+      JSON.stringify({periods:analysis.periods,importedPeriods,periodMode,warnings:analysis.warnings})
     ])).rows[0];
 
     const supervisorRows=(await client.query(`
@@ -145,7 +156,7 @@ racsRouter.post('/import',requireCapability('rac:import'),upload.single('file'),
     };
 
     let inserted=0,updated=0;
-    for(const r of analysis.records){
+    for(const r of importRecords){
       const reporting=await resolveArea(r.reportingArea);
       const reported=await resolveArea(r.reportedArea);
       const matchedSupervisor=supervisors.get(normalizedName(r.supervisorName))||null;
@@ -240,10 +251,11 @@ racsRouter.post('/import',requireCapability('rac:import'),upload.single('file'),
     `,[inserted,updated,batch.id]);
 
     const centralTotal=Number((await client.query(`SELECT COUNT(*)::int total FROM racs WHERE business_unit_id=$1`,[bu.id])).rows[0].total);
-    const periodTotal=analysis.dominantPeriod?Number((await client.query(`SELECT COUNT(*)::int total FROM racs WHERE business_unit_id=$1 AND TO_CHAR(report_date,'YYYY-MM')=$2`,[bu.id,analysis.dominantPeriod])).rows[0].total):centralTotal;
+    const periodForTotal=importedPeriods.length===1?importedPeriods[0]:analysis.dominantPeriod;
+    const periodTotal=periodForTotal?Number((await client.query(`SELECT COUNT(*)::int total FROM racs WHERE business_unit_id=$1::int AND TO_CHAR(report_date,'YYYY-MM')=$2::text`,[bu.id,periodForTotal])).rows[0].total):centralTotal;
     return{
       batchId:batch.id,inserted,updated,verified,centralTotal,periodTotal,
-      rejected:analysis.errors.length,period:analysis.dominantPeriod,warnings:analysis.warnings
+      rejected:analysis.errors.length,period:detectedPeriod,importedPeriods,periodMode,warnings:analysis.warnings
     };
   });
 
@@ -266,7 +278,26 @@ racsRouter.post('/:id/status',requireCapability('rac:followup'),upload.single('e
   if(target==='LEVANTADO'&&!req.file&&(await pool.query(`SELECT 1 FROM rac_evidence WHERE rac_id=$1 AND evidence_type='FINAL' LIMIT 1`,[id])).rowCount===0)return res.status(400).json({error:'Se requiere evidencia final'});
   const comment=clean(req.body.comment);let asset=null;
   if(req.file){const saved=await saveUpload(req.file,`racs/${rac.report_code}`);asset=await queueAsset({entityType:'RAC',entityId:rac.id,businessUnitId:rac.business_unit_id,saved,uploadedBy:req.user.id});await pool.query(`INSERT INTO rac_evidence(rac_id,evidence_type,comment,original_name,stored_name,mime_type,size_bytes,drive_file_id,drive_web_link,drive_folder_path,drive_status,uploaded_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,[id,['PENDIENTE DE VALIDACION','LEVANTADO'].includes(target)?'FINAL':'SEGUIMIENTO',comment||null,saved.originalName,saved.storedName,saved.mimeType,saved.size,asset.drive.fileId||null,asset.drive.webViewLink||null,asset.drive.folderPath||null,asset.drive.status,req.user.id]);}
-  await pool.query(`UPDATE racs SET status=$1,progress_percent=$2,first_attention_at=CASE WHEN $1<>'PENDIENTE' THEN COALESCE(first_attention_at,NOW()) ELSE first_attention_at END,validation_requested_at=CASE WHEN $1='PENDIENTE DE VALIDACION' THEN NOW() ELSE validation_requested_at END,validated_at=CASE WHEN $1='LEVANTADO' THEN NOW() ELSE validated_at END,validated_by=CASE WHEN $1='LEVANTADO' THEN $3 ELSE validated_by END,closed_at=CASE WHEN $1='LEVANTADO' THEN NOW() ELSE NULL END,lifted_at=CASE WHEN $1='LEVANTADO' THEN CURRENT_DATE ELSE NULL END,close_comment=CASE WHEN $1='LEVANTADO' THEN $4 ELSE close_comment END,validation_comment=CASE WHEN $1='DEVUELTO PARA CORRECCION' THEN $4 ELSE validation_comment END,updated_at=NOW() WHERE id=$5`,[target,target==='LEVANTADO'?100:target==='PENDIENTE'?0:target==='EN PROCESO'?50:90,req.user.id,comment||null,id]);
+  const progress=target==='LEVANTADO'?100:target==='PENDIENTE'?0:target==='EN PROCESO'?50:90;
+  await pool.query(`
+    WITH input AS (
+      SELECT $1::varchar AS target_status,$2::int AS target_progress,$3::int AS actor_id,$4::text AS note,$5::int AS rac_id
+    )
+    UPDATE racs r SET
+      status=input.target_status,
+      progress_percent=input.target_progress,
+      first_attention_at=CASE WHEN input.target_status<>'PENDIENTE'::varchar THEN COALESCE(r.first_attention_at,NOW()) ELSE r.first_attention_at END,
+      validation_requested_at=CASE WHEN input.target_status='PENDIENTE DE VALIDACION'::varchar THEN NOW() ELSE r.validation_requested_at END,
+      validated_at=CASE WHEN input.target_status='LEVANTADO'::varchar THEN NOW() ELSE r.validated_at END,
+      validated_by=CASE WHEN input.target_status='LEVANTADO'::varchar THEN input.actor_id ELSE r.validated_by END,
+      closed_at=CASE WHEN input.target_status='LEVANTADO'::varchar THEN NOW() ELSE NULL END,
+      lifted_at=CASE WHEN input.target_status='LEVANTADO'::varchar THEN CURRENT_DATE ELSE NULL END,
+      close_comment=CASE WHEN input.target_status='LEVANTADO'::varchar THEN input.note ELSE r.close_comment END,
+      validation_comment=CASE WHEN input.target_status='DEVUELTO PARA CORRECCION'::varchar THEN input.note ELSE r.validation_comment END,
+      updated_at=NOW()
+    FROM input
+    WHERE r.id=input.rac_id
+  `,[target,progress,req.user.id,comment||null,id]);
   if(target==='PENDIENTE DE VALIDACION'){const reviewers=(await pool.query(`SELECT DISTINCT u.id FROM users u LEFT JOIN user_business_units ubu ON ubu.user_id=u.id WHERE u.active=TRUE AND u.deleted_at IS NULL AND (u.role='MASTER' OR (u.role='SSOMA' AND ubu.business_unit_id=$1))`,[rac.business_unit_id])).rows;for(const reviewer of reviewers)await notify(reviewer.id,'Levantamiento por validar',`${rac.report_code} tiene evidencia final`,'WARN','RAC',id);}
   if(target==='DEVUELTO PARA CORRECCION'&&rac.supervisor_user_id)await notify(rac.supervisor_user_id,'Levantamiento devuelto',`${rac.report_code}: ${comment||'Requiere corrección'}`,'ERROR','RAC',id);
   await audit(req,'UPDATE_RAC_STATUS','RAC',id,{from:rac.status,to:target,comment});res.json({ok:true,drive:asset?.drive||null});

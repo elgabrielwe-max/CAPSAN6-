@@ -1,4 +1,4 @@
-# CAPSAN6 4.0.7 · Sistema Integral de Gestión SSOMA
+# CAPSAN6 4.0.8 · Sistema Integral de Gestión SSOMA
 
 CAPSAN6 4.0.0 es una reconstrucción completa del sistema. La interfaz, la arquitectura del servidor y el modelo relacional fueron creados nuevamente para que todos los módulos trabajen sobre una sola fuente de datos.
 
@@ -107,3 +107,10 @@ La presentación empresarial usada como referencia visual no se incluye como arc
 - La importación conserva el tipo de reporte del Excel y normaliza la causa por catálogo.
 - El PPT Ejecutivo acepta fechas PostgreSQL devueltas como objetos `Date` o texto ISO.
 - Los errores al generar reportes son enviados al manejador HTTP y ya no reinician el servicio.
+
+
+## Corrección 4.0.8
+- PPT Ejecutivo para jefatura con los tres gráficos oficiales por unidad: Pareto de causas, Supervisores/áreas y levantamiento con barras y circular.
+- Seguimiento RACS corregido con parámetros PostgreSQL tipados.
+- Registro de notas conectado estrictamente a tema, unidad y áreas asignadas; buscador DNI y PDF de asistencia conservados.
+- Importación multiperiodo con opción de importar todo, mes dominante o periodo específico.

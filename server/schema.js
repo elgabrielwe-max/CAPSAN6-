@@ -22,7 +22,7 @@ async function ensureColumns() {
     `ALTER TABLE workers ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`,
     `ALTER TABLE trainings ADD COLUMN IF NOT EXISTS status VARCHAR(30) NOT NULL DEFAULT 'BORRADOR'`,
     `ALTER TABLE trainings ADD COLUMN IF NOT EXISTS evaluation_topic VARCHAR(240)`,
-    `ALTER TABLE trainings ADD COLUMN IF NOT EXISTS approved_min NUMERIC(5,2) NOT NULL DEFAULT 11`,
+    `ALTER TABLE trainings ADD COLUMN IF NOT EXISTS approved_min NUMERIC(5,2) NOT NULL DEFAULT 16`,
     `ALTER TABLE trainings ADD COLUMN IF NOT EXISTS score_min NUMERIC(5,2) NOT NULL DEFAULT 0`,
     `ALTER TABLE trainings ADD COLUMN IF NOT EXISTS score_max NUMERIC(5,2) NOT NULL DEFAULT 20`,
     `ALTER TABLE grades ADD COLUMN IF NOT EXISTS attendance_status VARCHAR(30) NOT NULL DEFAULT 'ASISTIO'`,
@@ -184,7 +184,7 @@ export async function initSchema() {
       enabled BOOLEAN NOT NULL DEFAULT FALSE,
       start_date DATE,
       end_date DATE,
-      approved_min NUMERIC(5,2) NOT NULL DEFAULT 11,
+      approved_min NUMERIC(5,2) NOT NULL DEFAULT 16,
       failed_max NUMERIC(5,2) NOT NULL DEFAULT 10,
       score_min NUMERIC(5,2) NOT NULL DEFAULT 0,
       score_max NUMERIC(5,2) NOT NULL DEFAULT 20,
@@ -591,6 +591,8 @@ export async function initSchema() {
   await q(`INSERT INTO schema_migrations(version) VALUES('4.0.4') ON CONFLICT DO NOTHING`);
   await q(`INSERT INTO schema_migrations(version) VALUES('4.0.6') ON CONFLICT DO NOTHING`);
   await q(`INSERT INTO schema_migrations(version) VALUES('4.0.7') ON CONFLICT DO NOTHING`);
+  await q(`ALTER TABLE trainings ALTER COLUMN approved_min SET DEFAULT 16`);
+  await q(`INSERT INTO schema_migrations(version) VALUES('4.0.8') ON CONFLICT DO NOTHING`);
   await ensureMaster();
   await applyMasterRecovery();
 }
