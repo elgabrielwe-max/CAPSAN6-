@@ -12,11 +12,11 @@ test('periodo de lotes admite MULTIPERIODO en bases nuevas y existentes',async()
   assert.match(racs,/\$5::varchar\(20\)/);
 });
 
-test('versión 4.0.13 publicada',async()=>{
+test('versión 4.0.14 publicada',async()=>{
   const pkg=JSON.parse(await read('package.json'));
   const app=await read('server/app.js');
   const index=await read('public/index.html');
-  assert.equal(pkg.version,'4.0.13');
-  assert.match(app,/4\.0\.13-HOTFIX-PERIODO-IMPORTACION-MULTIPERIODO/);
-  assert.match(index,/v=4013/);
+  assert.equal(pkg.version,'4.0.14');
+  assert.match(app,/4\.0\.14-HOTFIX-REGISTRO-RAC-SIN-ERROR-RESET/);
+  assert.match(index,/v=4014/);
 });

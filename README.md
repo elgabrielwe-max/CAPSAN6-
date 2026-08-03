@@ -1,4 +1,4 @@
-# CAPSAN6 4.0.13 · Sistema Integral de Gestión SSOMA
+# CAPSAN6 4.0.14 · Sistema Integral de Gestión SSOMA
 
 CAPSAN6 4.0.0 es una reconstrucción completa del sistema. La interfaz, la arquitectura del servidor y el modelo relacional fueron creados nuevamente para que todos los módulos trabajen sobre una sola fuente de datos.
 
@@ -150,3 +150,11 @@ La presentación empresarial usada como referencia visual no se incluye como arc
 - Se corrige el error PostgreSQL `22001: value too long for type character varying(7)` al importar archivos con varios meses.
 - Se conserva el indicador `MULTIPERIODO` y el detalle de meses importados dentro del resumen JSON del lote.
 - La migración es automática y no elimina RACS ni historiales anteriores.
+
+
+## Corrección 4.0.14 · Registro RAC sin falso error visual
+
+- El formulario conserva su referencia antes de esperar la respuesta de la API.
+- Después de crear correctamente el RAC, el formulario se limpia sin intentar leer `event.currentTarget` cuando ya es `null`.
+- Se mantiene la fecha actual y se reinicia la clasificación IA para el siguiente registro.
+- No modifica el RAC creado ni genera duplicados.

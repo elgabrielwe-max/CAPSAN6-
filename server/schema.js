@@ -637,6 +637,7 @@ export async function initSchema() {
   await q(`INSERT INTO schema_migrations(version) VALUES('4.0.12') ON CONFLICT DO NOTHING`);
   await q(`ALTER TABLE rac_import_batches ALTER COLUMN detected_period TYPE VARCHAR(20) USING detected_period::text`);
   await q(`INSERT INTO schema_migrations(version) VALUES('4.0.13') ON CONFLICT DO NOTHING`);
+  await q(`INSERT INTO schema_migrations(version) VALUES('4.0.14') ON CONFLICT DO NOTHING`);
   await ensureMaster();
   await applyMasterRecovery();
 }
