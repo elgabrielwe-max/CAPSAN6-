@@ -1,4 +1,4 @@
-import { api } from '../api.js';
+import { api, download } from '../api.js';
 import { state, escapeHtml } from '../state.js';
 import { $, toast, errorBox, kpi, table } from '../ui.js';
 
@@ -38,6 +38,20 @@ function rosterToolbar(prefix, note) {
   </div>`;
 }
 
+function attendanceScanBlock(prefix, label) {
+  return `<section class="panel daily-scan-panel"><div class="panel-title-row"><div><h3>Escaneado de asistentes</h3><p class="panel-sub">Adjunta la lista física firmada o escaneada. Se aceptan PDF, JPG, PNG, WEBP, HEIC y HEIF, hasta 25 MB.</p></div></div>
+    <div class="form-grid two"><div class="field"><label>${escapeHtml(label)}</label><input id="${prefix}AttendanceScan" type="file" accept=".pdf,.jpg,.jpeg,.png,.webp,.heic,.heif,application/pdf,image/jpeg,image/png,image/webp,image/heic,image/heif"></div>
+    <div class="field"><label>Archivos vinculados</label><div id="${prefix}AttendanceFiles" class="daily-file-list"><span class="muted">Guarda el registro para adjuntar el escaneado.</span></div></div></div>
+  </section>`;
+}
+
+function formatBytes(value) {
+  const size = Number(value || 0);
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${Math.round(size / 1024)} KB`;
+  return `${Math.round(size / 1024 / 1024 * 10) / 10} MB`;
+}
+
 function ddsForm() {
   return `<form id="ddsForm">
     <input type="hidden" name="id">
@@ -56,6 +70,7 @@ function ddsForm() {
         <div class="field"><label>&nbsp;</label><button type="button" class="btn amber" id="ddsLoadWorkers">Cargar trabajadores</button></div>
       </div>
     </section>
+    ${attendanceScanBlock('dds', 'Lista firmada del DDS')}
     <section class="panel"><div class="panel-title-row"><div><h3>Asistencia del DDS</h3><p class="panel-sub"><b id="ddsSelectedCount">0</b> trabajadores seleccionados.</p></div><button class="btn primary" type="submit">Guardar DDS</button></div>
       ${rosterToolbar('dds', 'Los trabajadores se filtran por unidad, área y guardia utilizando la base ya existente.')}
       <div id="ddsRoster"><p class="muted">Selecciona la unidad y pulsa “Cargar trabajadores”.</p></div>
@@ -84,6 +99,7 @@ function ritForm() {
         <div class="field"><label>&nbsp;</label><button type="button" class="btn amber" id="ritLoadWorkers">Cargar trabajadores</button></div>
       </div>
     </section>
+    ${attendanceScanBlock('rit', 'Lista firmada de la RIT')}
     <section class="panel"><div class="panel-title-row"><div><h3>Personal asignado al turno</h3><p class="panel-sub"><b id="ritSelectedCount">0</b> trabajadores seleccionados.</p></div><button class="btn primary" type="submit">Guardar RIT</button></div>
       ${rosterToolbar('rit', 'Puedes asignar una actividad y responsabilidad diferente a cada trabajador.')}
       <div id="ritRoster"><p class="muted">Selecciona la unidad y pulsa “Cargar trabajadores”.</p></div>
@@ -181,13 +197,32 @@ export async function dailySafetyPage(root) {
     if (!data.workers.length) toast('No se encontraron trabajadores activos con esos filtros', 'error');
   }
 
+  function renderAttendanceFiles(prefix, files = []) {
+    const box = $(`#${prefix}AttendanceFiles`);
+    if (!box) return;
+    if (!files.length) {
+      box.innerHTML = '<span class="muted">Sin escaneado adjunto.</span>';
+      return;
+    }
+    box.innerHTML = files.map(file => `<button type="button" class="daily-file-item" data-scan-file="${file.id}" data-scan-name="${escapeHtml(file.original_name)}"><span>📎 ${escapeHtml(file.original_name)}</span><small>${formatBytes(file.size_bytes)} · ${String(file.created_at || '').slice(0, 10)}</small></button>`).join('');
+    box.querySelectorAll('[data-scan-file]').forEach(button => {
+      button.onclick = () => download(`/api/files/${button.dataset.scanFile}`, button.dataset.scanName).catch(error => toast(error.message, 'error'));
+    });
+  }
+
+  async function uploadScan(prefix, sessionId, file) {
+    if (!file || !file.size) return null;
+    const data = new FormData(); data.append('file', file);
+    return api(`/api/daily-safety/${prefix}/${sessionId}/attendance-scan`, { method: 'POST', body: data });
+  }
+
   function resetDds() {
     const form = $('#ddsForm'); form.reset(); form.elements.id.value = ''; form.elements.sessionDate.value = localDate(); form.elements.durationMinutes.value = 5; form.elements.status.value = 'REALIZADO';
-    form.elements.areaId.innerHTML = areaOptions(''); ddsWorkers = []; $('#ddsRoster').innerHTML = '<p class="muted">Selecciona la unidad y pulsa “Cargar trabajadores”.</p>'; updateSelected('dds');
+    form.elements.areaId.innerHTML = areaOptions(''); ddsWorkers = []; $('#ddsRoster').innerHTML = '<p class="muted">Selecciona la unidad y pulsa “Cargar trabajadores”.</p>'; renderAttendanceFiles('dds', []); updateSelected('dds');
   }
   function resetRit() {
     const form = $('#ritForm'); form.reset(); form.elements.id.value = ''; form.elements.meetingDate.value = localDate(); form.elements.status.value = 'REALIZADO';
-    form.elements.areaId.innerHTML = areaOptions(''); ritWorkers = []; $('#ritRoster').innerHTML = '<p class="muted">Selecciona la unidad y pulsa “Cargar trabajadores”.</p>'; updateSelected('rit');
+    form.elements.areaId.innerHTML = areaOptions(''); ritWorkers = []; $('#ritRoster').innerHTML = '<p class="muted">Selecciona la unidad y pulsa “Cargar trabajadores”.</p>'; renderAttendanceFiles('rit', []); updateSelected('rit');
   }
 
   function collectDdsParticipants() {
@@ -208,7 +243,7 @@ export async function dailySafetyPage(root) {
     f.elements.areaId.innerHTML = areaOptions(data.session.business_unit_id, data.session.area_id); f.elements.areaId.value = data.session.area_id || '';
     f.elements.shift.value = data.session.shift; f.elements.guard.value = data.session.guard || ''; f.elements.durationMinutes.value = data.session.duration_minutes; f.elements.topic.value = data.session.topic;
     f.elements.objective.value = data.session.objective || ''; f.elements.observations.value = data.session.observations || ''; f.elements.status.value = data.session.status;
-    await loadWorkers('dds', data.participants); window.scrollTo({ top: 0, behavior: 'smooth' });
+    await loadWorkers('dds', data.participants); renderAttendanceFiles('dds', data.attendanceFiles); window.scrollTo({ top: 0, behavior: 'smooth' });
   }
   async function editRit(id) {
     switchTab('rit');
@@ -218,16 +253,16 @@ export async function dailySafetyPage(root) {
     f.elements.shift.value = data.session.shift; f.elements.guard.value = data.session.guard || ''; f.elements.status.value = data.session.status;
     f.elements.previousShiftSummary.value = data.session.previous_shift_summary || ''; f.elements.plannedActivities.value = lines(data.session.planned_activities); f.elements.criticalRisks.value = lines(data.session.critical_risks);
     f.elements.controls.value = lines(data.session.controls); f.elements.restrictions.value = data.session.restrictions || ''; f.elements.commitments.value = lines(data.session.commitments); f.elements.observations.value = data.session.observations || '';
-    await loadWorkers('rit', data.participants); window.scrollTo({ top: 0, behavior: 'smooth' });
+    await loadWorkers('rit', data.participants); renderAttendanceFiles('rit', data.attendanceFiles); window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
   async function loadHistory() {
     const form = $('#dailyHistoryFilters'); const params = new URLSearchParams();
     if (form) new FormData(form).forEach((value, key) => { if (value) params.set(key, value); });
     const [dds, rit] = await Promise.all([api(`/api/daily-safety/dds?${params}`), api(`/api/daily-safety/rit?${params}`)]);
-    const ddsRows = dds.map(row => `<tr><td>${String(row.session_date).slice(0, 10)}</td><td>${escapeHtml(row.business_unit_name)}</td><td>${escapeHtml(row.area_name || 'Todas')}</td><td>${escapeHtml(row.topic)}</td><td>${escapeHtml(row.presenter_name || row.presenter_user_name || '')}</td><td>${row.attended_count}/${row.participant_count}</td><td>${statusTag(row.status)}</td><td><button class="btn ghost small" data-edit-dds="${row.id}">Abrir</button></td></tr>`);
-    const ritRows = rit.map(row => `<tr><td>${String(row.meeting_date).slice(0, 10)}</td><td>${escapeHtml(row.business_unit_name)}</td><td>${escapeHtml(row.area_name || 'Todas')}</td><td>${escapeHtml(row.supervisor_name || row.supervisor_user_name || '')}</td><td>${row.activity_count}</td><td>${row.risk_count}</td><td>${row.participant_count}</td><td>${statusTag(row.status)}</td><td><button class="btn ghost small" data-edit-rit="${row.id}">Abrir</button></td></tr>`);
-    $('#dailyHistory').innerHTML = `<section class="panel"><h3>Historial DDS</h3>${table(['Fecha', 'Unidad', 'Área', 'Tema', 'Expositor', 'Asistencia', 'Estado', ''], ddsRows)}</section><section class="panel"><h3>Historial RIT</h3>${table(['Fecha', 'Unidad', 'Área', 'Supervisor', 'Actividades', 'Riesgos', 'Personal', 'Estado', ''], ritRows)}</section>`;
+    const ddsRows = dds.map(row => `<tr><td>${String(row.session_date).slice(0, 10)}</td><td>${escapeHtml(row.business_unit_name)}</td><td>${escapeHtml(row.area_name || 'Todas')}</td><td>${escapeHtml(row.topic)}</td><td>${escapeHtml(row.presenter_name || row.presenter_user_name || '')}</td><td>${row.attended_count}/${row.participant_count}</td><td>${row.attendance_scan_count ? `📎 ${row.attendance_scan_count}` : '—'}</td><td>${statusTag(row.status)}</td><td><button class="btn ghost small" data-edit-dds="${row.id}">Abrir</button></td></tr>`);
+    const ritRows = rit.map(row => `<tr><td>${String(row.meeting_date).slice(0, 10)}</td><td>${escapeHtml(row.business_unit_name)}</td><td>${escapeHtml(row.area_name || 'Todas')}</td><td>${escapeHtml(row.supervisor_name || row.supervisor_user_name || '')}</td><td>${row.activity_count}</td><td>${row.risk_count}</td><td>${row.participant_count}</td><td>${row.attendance_scan_count ? `📎 ${row.attendance_scan_count}` : '—'}</td><td>${statusTag(row.status)}</td><td><button class="btn ghost small" data-edit-rit="${row.id}">Abrir</button></td></tr>`);
+    $('#dailyHistory').innerHTML = `<section class="panel"><h3>Historial DDS</h3>${table(['Fecha', 'Unidad', 'Área', 'Tema', 'Expositor', 'Asistencia', 'Escaneado', 'Estado', ''], ddsRows)}</section><section class="panel"><h3>Historial RIT</h3>${table(['Fecha', 'Unidad', 'Área', 'Supervisor', 'Actividades', 'Riesgos', 'Personal', 'Escaneado', 'Estado', ''], ritRows)}</section>`;
     document.querySelectorAll('[data-edit-dds]').forEach(button => { button.onclick = () => editDds(button.dataset.editDds).catch(error => toast(error.message, 'error')); });
     document.querySelectorAll('[data-edit-rit]').forEach(button => { button.onclick = () => editRit(button.dataset.editRit).catch(error => toast(error.message, 'error')); });
     const filters = Object.fromEntries(params.entries()); await refreshSummary(filters);
@@ -238,10 +273,18 @@ export async function dailySafetyPage(root) {
     $('#ddsLoadWorkers').onclick = () => loadWorkers('dds').catch(error => toast(error.message, 'error'));
     $('#ddsReset').onclick = resetDds;
     form.onsubmit = async event => {
-      event.preventDefault(); const body = Object.fromEntries(new FormData(form).entries()); body.participants = collectDdsParticipants();
+      event.preventDefault();
+      const scan = $('#ddsAttendanceScan')?.files?.[0] || null;
+      const formData = new FormData(form); const body = Object.fromEntries(formData.entries()); body.participants = collectDdsParticipants();
       const id = body.id; delete body.id;
-      try { await api(id ? `/api/daily-safety/dds/${id}` : '/api/daily-safety/dds', { method: id ? 'PUT' : 'POST', body }); toast(id ? 'DDS actualizado' : 'DDS registrado'); resetDds(); await refreshSummary(); }
-      catch (error) { toast(error.message, 'error'); }
+      try {
+        const saved = await api(id ? `/api/daily-safety/dds/${id}` : '/api/daily-safety/dds', { method: id ? 'PUT' : 'POST', body });
+        if (scan) {
+          try { await uploadScan('dds', saved.id, scan); }
+          catch (uploadError) { toast(`DDS guardado, pero no se adjuntó el escaneado: ${uploadError.message}`, 'error'); await editDds(saved.id); return; }
+        }
+        toast(scan ? 'DDS y escaneado guardados' : (id ? 'DDS actualizado' : 'DDS registrado')); resetDds(); await refreshSummary();
+      } catch (error) { toast(error.message, 'error'); }
     };
   }
   function bindRit() {
@@ -249,10 +292,18 @@ export async function dailySafetyPage(root) {
     $('#ritLoadWorkers').onclick = () => loadWorkers('rit').catch(error => toast(error.message, 'error'));
     $('#ritReset').onclick = resetRit;
     form.onsubmit = async event => {
-      event.preventDefault(); const body = Object.fromEntries(new FormData(form).entries()); body.participants = collectRitParticipants();
+      event.preventDefault();
+      const scan = $('#ritAttendanceScan')?.files?.[0] || null;
+      const formData = new FormData(form); const body = Object.fromEntries(formData.entries()); body.participants = collectRitParticipants();
       const id = body.id; delete body.id;
-      try { await api(id ? `/api/daily-safety/rit/${id}` : '/api/daily-safety/rit', { method: id ? 'PUT' : 'POST', body }); toast(id ? 'RIT actualizada' : 'RIT registrada'); resetRit(); await refreshSummary(); }
-      catch (error) { toast(error.message, 'error'); }
+      try {
+        const saved = await api(id ? `/api/daily-safety/rit/${id}` : '/api/daily-safety/rit', { method: id ? 'PUT' : 'POST', body });
+        if (scan) {
+          try { await uploadScan('rit', saved.id, scan); }
+          catch (uploadError) { toast(`RIT guardada, pero no se adjuntó el escaneado: ${uploadError.message}`, 'error'); await editRit(saved.id); return; }
+        }
+        toast(scan ? 'RIT y escaneado guardados' : (id ? 'RIT actualizada' : 'RIT registrada')); resetRit(); await refreshSummary();
+      } catch (error) { toast(error.message, 'error'); }
     };
   }
 

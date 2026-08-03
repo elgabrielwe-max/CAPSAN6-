@@ -1,4 +1,4 @@
-# CAPSAN6 4.0.19 · Sistema Integral de Gestión SSOMA
+# CAPSAN6 4.0.20 · Sistema Integral de Gestión SSOMA
 
 ## Corrección 4.0.16 · Depuración de RACS
 
@@ -7,6 +7,14 @@
 - Evita dobles clics y muestra la cantidad realmente eliminada.
 
 
+
+
+## Nuevo 4.0.20 · Escaneado de asistentes en DDS y RIT
+
+- El supervisor puede adjuntar la lista física firmada o escaneada en PDF, JPG, PNG, WEBP, HEIC o HEIF.
+- El escaneado queda vinculado al DDS o RIT correspondiente, junto con la asistencia digital basada en los trabajadores existentes.
+- Los archivos se visualizan desde el registro y se identifican en el historial.
+- Tamaño máximo por archivo: 25 MB.
 
 ## Nuevo módulo 4.0.19 · DDS y Reunión de Inicio de Turno
 

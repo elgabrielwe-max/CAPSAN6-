@@ -1,8 +1,13 @@
 import { Router } from 'express';
+import multer from 'multer';
 import { authRequired, assertUnitAccess } from '../auth.js';
 import { hasCapability } from '../permissions.js';
 import { pool, tx } from '../db.js';
 import { audit } from '../services/audit.js';
+import { saveUpload } from '../services/storage.js';
+import { queueAsset } from '../services/drive.js';
+
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
 
 export const dailySafetyRouter = Router();
 dailySafetyRouter.use(authRequired);
@@ -12,6 +17,21 @@ const upper = value => clean(value).toUpperCase();
 const list = value => Array.isArray(value) ? value : [];
 const allowed = (value, values, fallback) => values.includes(upper(value)) ? upper(value) : fallback;
 const dateValue = value => /^\d{4}-\d{2}-\d{2}$/.test(String(value || '')) ? String(value) : '';
+
+const scanEntity = Object.freeze({ dds: 'DDS_ATTENDANCE_SCAN', rit: 'RIT_ATTENDANCE_SCAN' });
+const scanAllowed = file => {
+  if (!file) return false;
+  const mime = String(file.mimetype || '').toLowerCase();
+  const name = String(file.originalname || '').toLowerCase();
+  return ['application/pdf', 'image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'].includes(mime)
+    || /\.(pdf|jpe?g|png|webp|heic|heif)$/i.test(name);
+};
+
+async function attendanceFiles(entityType, entityId) {
+  return (await pool.query(`SELECT id,original_name,mime_type,size_bytes,drive_status,created_at
+    FROM file_assets WHERE entity_type=$1 AND entity_id=$2 ORDER BY created_at DESC,id DESC`, [entityType, String(entityId)])).rows;
+}
+
 
 function requireDaily(req, res, next) {
   if (!req.user || !(hasCapability(req.user.role, 'dds:manage') || hasCapability(req.user.role, 'rit:manage'))) {
@@ -123,7 +143,8 @@ dailySafetyRouter.get('/summary', async (req, res) => {
 dailySafetyRouter.get('/dds', async (req, res) => {
   const filter = buildListFilters(req, 'd', 'session_date');
   const rows = (await pool.query(`SELECT d.*,bu.name business_unit_name,a.name area_name,u.name presenter_user_name,
-      COUNT(da.id)::int participant_count,COUNT(da.id) FILTER(WHERE da.attendance_status='ASISTIO')::int attended_count
+      COUNT(da.id)::int participant_count,COUNT(da.id) FILTER(WHERE da.attendance_status='ASISTIO')::int attended_count,
+      (SELECT COUNT(*)::int FROM file_assets fa WHERE fa.entity_type='DDS_ATTENDANCE_SCAN' AND fa.entity_id=d.id::text) attendance_scan_count
     FROM dds_sessions d JOIN business_units bu ON bu.id=d.business_unit_id LEFT JOIN areas a ON a.id=d.area_id
     LEFT JOIN users u ON u.id=d.presenter_user_id LEFT JOIN dds_attendance da ON da.dds_id=d.id
     WHERE ${filter.clause} GROUP BY d.id,bu.name,a.name,u.name ORDER BY d.session_date DESC,d.created_at DESC LIMIT 300`, filter.params)).rows;
@@ -139,8 +160,40 @@ dailySafetyRouter.get('/dds/:id', async (req, res) => {
   if (!session) return res.status(404).json({ error: 'DDS no encontrado' });
   const participants = (await pool.query(`SELECT da.worker_id,da.attendance_status,da.observation,w.dni,w.full_name,w.position,w.guard,a.name area_name
     FROM dds_attendance da JOIN workers w ON w.id=da.worker_id JOIN areas a ON a.id=w.area_id WHERE da.dds_id=$1 ORDER BY a.name,w.full_name`, [id])).rows;
-  res.json({ session, participants });
+  const files = await attendanceFiles(scanEntity.dds, id);
+  res.json({ session, participants, attendanceFiles: files });
 });
+
+async function sessionForScan(kind, id, user) {
+  const table = kind === 'dds' ? 'dds_sessions' : 'rit_sessions';
+  const row = (await pool.query(`SELECT id,business_unit_id FROM ${table} WHERE id=$1`, [Number(id)])).rows[0];
+  if (!row || !assertUnitAccess(user, row.business_unit_id)) return null;
+  return row;
+}
+
+async function uploadAttendanceScan(req, res, kind) {
+  const id = Number(req.params.id);
+  const session = await sessionForScan(kind, id, req.user);
+  if (!session) return res.status(404).json({ error: `${kind === 'dds' ? 'DDS' : 'RIT'} no encontrada o fuera de tu alcance` });
+  if (!req.file) return res.status(400).json({ error: 'Adjunta el escaneado de asistentes' });
+  if (!scanAllowed(req.file)) return res.status(400).json({ error: 'El escaneado debe ser PDF, JPG, PNG, WEBP, HEIC o HEIF' });
+  const saved = await saveUpload(req.file, `daily-safety/${kind}/${id}`);
+  const queued = await queueAsset({
+    entityType: scanEntity[kind], entityId: id, businessUnitId: session.business_unit_id, saved, uploadedBy: req.user.id,
+  });
+  await audit(req, 'UPLOAD_ATTENDANCE_SCAN', kind.toUpperCase(), id, { fileAssetId: queued.asset.id, originalName: saved.originalName });
+  res.status(201).json({
+    id: queued.asset.id,
+    original_name: queued.asset.original_name,
+    mime_type: queued.asset.mime_type,
+    size_bytes: queued.asset.size_bytes,
+    drive_status: queued.drive.status,
+    created_at: queued.asset.created_at,
+  });
+}
+
+dailySafetyRouter.post('/dds/:id/attendance-scan', upload.single('file'), (req, res) => uploadAttendanceScan(req, res, 'dds'));
+dailySafetyRouter.post('/rit/:id/attendance-scan', upload.single('file'), (req, res) => uploadAttendanceScan(req, res, 'rit'));
 
 async function saveDds(req, res) {
   const id = req.params.id ? Number(req.params.id) : null;
@@ -187,7 +240,8 @@ dailySafetyRouter.get('/rit', async (req, res) => {
   const filter = buildListFilters(req, 'r', 'meeting_date');
   const rows = (await pool.query(`SELECT r.*,bu.name business_unit_name,a.name area_name,u.name supervisor_user_name,
       COUNT(rp.id)::int participant_count,jsonb_array_length(COALESCE(r.planned_activities,'[]'::jsonb))::int activity_count,
-      jsonb_array_length(COALESCE(r.critical_risks,'[]'::jsonb))::int risk_count
+      jsonb_array_length(COALESCE(r.critical_risks,'[]'::jsonb))::int risk_count,
+      (SELECT COUNT(*)::int FROM file_assets fa WHERE fa.entity_type='RIT_ATTENDANCE_SCAN' AND fa.entity_id=r.id::text) attendance_scan_count
     FROM rit_sessions r JOIN business_units bu ON bu.id=r.business_unit_id LEFT JOIN areas a ON a.id=r.area_id
     LEFT JOIN users u ON u.id=r.supervisor_user_id LEFT JOIN rit_participants rp ON rp.rit_id=r.id
     WHERE ${filter.clause} GROUP BY r.id,bu.name,a.name,u.name ORDER BY r.meeting_date DESC,r.created_at DESC LIMIT 300`, filter.params)).rows;
@@ -203,7 +257,8 @@ dailySafetyRouter.get('/rit/:id', async (req, res) => {
   if (!session) return res.status(404).json({ error: 'RIT no encontrada' });
   const participants = (await pool.query(`SELECT rp.worker_id,rp.assigned_activity,rp.responsibility,w.dni,w.full_name,w.position,w.guard,a.name area_name
     FROM rit_participants rp JOIN workers w ON w.id=rp.worker_id JOIN areas a ON a.id=w.area_id WHERE rp.rit_id=$1 ORDER BY a.name,w.full_name`, [id])).rows;
-  res.json({ session, participants });
+  const files = await attendanceFiles(scanEntity.rit, id);
+  res.json({ session, participants, attendanceFiles: files });
 });
 
 async function saveRit(req, res) {

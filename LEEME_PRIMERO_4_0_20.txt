@@ -1,0 +1,7 @@
+CAPSAN6 4.0.20
+
+Actualización: escaneado de asistentes para DDS y RIT.
+
+Para actualizar GitHub, sube el contenido del ZIP de actualización conservando las carpetas.
+Railway aplicará el cambio automáticamente. No se requiere crear nuevas tablas.
+Después del despliegue, usa Ctrl + F5.

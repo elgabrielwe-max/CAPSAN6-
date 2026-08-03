@@ -44,5 +44,5 @@ test('la interfaz incorpora Gestión diaria con carga de trabajadores existentes
   assert.match(page, /Cargar trabajadores/);
   assert.match(page, /BASE MAESTRA/);
   assert.match(server, /app\.use\('\/api\/daily-safety',dailySafetyRouter\)/);
-  assert.match(server, /version:'4\.0\.19/);
+  assert.match(server, /version:'4\.0\.(?:19|20)/);
 });
