@@ -222,7 +222,7 @@ racsRouter.post('/import',requireCapability('rac:import'),upload.single('file'),
         detected_period,rows_received,total_rows,rows_valid,rows_rejected,
         error_rows,status,summary
       )
-      VALUES($1::text,$2::text,$3::int,$4::int,$4::int,$5::varchar,$6::int,$6::int,$7::int,$8::int,$8::int,'PROCESANDO',$9::jsonb)
+      VALUES($1::text,$2::text,$3::int,$4::int,$4::int,$5::varchar(20),$6::int,$6::int,$7::int,$8::int,$8::int,'PROCESANDO',$9::jsonb)
       RETURNING id
     `,[
       req.file.originalname,req.file.originalname,bu.id,req.user.id,detectedPeriod,

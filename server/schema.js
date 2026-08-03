@@ -96,7 +96,7 @@ async function ensureColumns() {
     `ALTER TABLE rac_import_batches ADD COLUMN IF NOT EXISTS source_file TEXT`,
     `ALTER TABLE rac_import_batches ADD COLUMN IF NOT EXISTS imported_by INTEGER`,
     `ALTER TABLE rac_import_batches ADD COLUMN IF NOT EXISTS created_by INTEGER`,
-    `ALTER TABLE rac_import_batches ADD COLUMN IF NOT EXISTS detected_period VARCHAR(7)`,
+    `ALTER TABLE rac_import_batches ADD COLUMN IF NOT EXISTS detected_period VARCHAR(20)`,
     `ALTER TABLE rac_import_batches ADD COLUMN IF NOT EXISTS rows_received INTEGER NOT NULL DEFAULT 0`,
     `ALTER TABLE rac_import_batches ADD COLUMN IF NOT EXISTS rows_valid INTEGER NOT NULL DEFAULT 0`,
     `ALTER TABLE rac_import_batches ADD COLUMN IF NOT EXISTS rows_inserted INTEGER NOT NULL DEFAULT 0`,
@@ -312,7 +312,7 @@ export async function initSchema() {
       original_name TEXT NOT NULL,
       business_unit_id INTEGER REFERENCES business_units(id),
       imported_by INTEGER REFERENCES users(id),
-      detected_period VARCHAR(7),
+      detected_period VARCHAR(20),
       rows_received INTEGER NOT NULL DEFAULT 0,
       rows_valid INTEGER NOT NULL DEFAULT 0,
       rows_inserted INTEGER NOT NULL DEFAULT 0,
@@ -635,6 +635,8 @@ export async function initSchema() {
   `);
   await q(`INSERT INTO schema_migrations(version) VALUES('4.0.11') ON CONFLICT DO NOTHING`);
   await q(`INSERT INTO schema_migrations(version) VALUES('4.0.12') ON CONFLICT DO NOTHING`);
+  await q(`ALTER TABLE rac_import_batches ALTER COLUMN detected_period TYPE VARCHAR(20) USING detected_period::text`);
+  await q(`INSERT INTO schema_migrations(version) VALUES('4.0.13') ON CONFLICT DO NOTHING`);
   await ensureMaster();
   await applyMasterRecovery();
 }

@@ -1,4 +1,4 @@
-# CAPSAN6 4.0.12 · Sistema Integral de Gestión SSOMA
+# CAPSAN6 4.0.13 · Sistema Integral de Gestión SSOMA
 
 CAPSAN6 4.0.0 es una reconstrucción completa del sistema. La interfaz, la arquitectura del servidor y el modelo relacional fueron creados nuevamente para que todos los módulos trabajen sobre una sola fuente de datos.
 
@@ -144,3 +144,9 @@ La presentación empresarial usada como referencia visual no se incluye como arc
 - Se califican explícitamente `inferred.user_id` e `inferred.business_unit_id` en la migración de alcance histórico.
 - Evita el error PostgreSQL `42702: column reference "business_unit_id" is ambiguous` durante `initSchema`.
 - Conserva la reparación automática de unidades para Supervisores y SSOMA sin borrar información.
+
+## Corrección 4.0.13 · Importación multiperiodo
+- Se amplía `rac_import_batches.detected_period` de `VARCHAR(7)` a `VARCHAR(20)`.
+- Se corrige el error PostgreSQL `22001: value too long for type character varying(7)` al importar archivos con varios meses.
+- Se conserva el indicador `MULTIPERIODO` y el detalle de meses importados dentro del resumen JSON del lote.
+- La migración es automática y no elimina RACS ni historiales anteriores.
