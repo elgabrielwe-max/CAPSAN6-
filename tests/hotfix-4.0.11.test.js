@@ -33,9 +33,9 @@ test('dashboard informa alcance efectivo',async()=>{
   assert.match(frontend,/Perfil sin unidad vinculada/);
 });
 
-test('versión 4.0.11 publicada y cache renovada',async()=>{
+test('alcance 4.0.11 permanece integrado en versión posterior',async()=>{
   const pkg=JSON.parse(await read('package.json'));
   const index=await read('public/index.html');
-  assert.equal(pkg.version,'4.0.11');
-  assert.match(index,/v=4011/);
+  assert.equal(pkg.version,'4.0.12');
+  assert.match(index,/v=4012/);
 });

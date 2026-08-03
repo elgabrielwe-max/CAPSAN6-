@@ -599,7 +599,7 @@ export async function initSchema() {
   // siguen siendo visibles aunque la unidad esté inactiva, para conservar la data histórica.
   await q(`
     INSERT INTO user_business_units(user_id,business_unit_id)
-    SELECT DISTINCT user_id,business_unit_id FROM (
+    SELECT DISTINCT inferred.user_id,inferred.business_unit_id FROM (
       SELECT supervisor_user_id user_id,business_unit_id FROM racs
         WHERE supervisor_user_id IS NOT NULL AND business_unit_id IS NOT NULL
       UNION
@@ -634,6 +634,7 @@ export async function initSchema() {
     ON CONFLICT DO NOTHING
   `);
   await q(`INSERT INTO schema_migrations(version) VALUES('4.0.11') ON CONFLICT DO NOTHING`);
+  await q(`INSERT INTO schema_migrations(version) VALUES('4.0.12') ON CONFLICT DO NOTHING`);
   await ensureMaster();
   await applyMasterRecovery();
 }

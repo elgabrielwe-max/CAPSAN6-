@@ -1,4 +1,4 @@
-# CAPSAN6 4.0.11 · Sistema Integral de Gestión SSOMA
+# CAPSAN6 4.0.12 · Sistema Integral de Gestión SSOMA
 
 CAPSAN6 4.0.0 es una reconstrucción completa del sistema. La interfaz, la arquitectura del servidor y el modelo relacional fueron creados nuevamente para que todos los módulos trabajen sobre una sola fuente de datos.
 
@@ -138,3 +138,9 @@ La presentación empresarial usada como referencia visual no se incluye como arc
 - Al ingresar como Supervisor o SSOMA, el sistema repara automáticamente vínculos históricos verificables desde RACS, asignaciones, notas, planes, evidencias e incidentes.
 - El Dashboard muestra las unidades que forman el alcance efectivo del perfil.
 - El Máster recibe el conteo de RACS disponibles al ingresar al perfil.
+
+
+## Corrección 4.0.12 · Inicio de Railway reparado
+- Se califican explícitamente `inferred.user_id` e `inferred.business_unit_id` en la migración de alcance histórico.
+- Evita el error PostgreSQL `42702: column reference "business_unit_id" is ambiguous` durante `initSchema`.
+- Conserva la reparación automática de unidades para Supervisores y SSOMA sin borrar información.
