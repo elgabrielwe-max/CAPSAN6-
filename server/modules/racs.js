@@ -58,6 +58,101 @@ racsRouter.get('/',requireCapability('rac:view'),async(req,res)=>{
   res.json(rows);
 });
 
+
+racsRouter.get('/changes',requireCapability('rac:view'),async(req,res)=>{
+  const {where,params}=buildWhere(req);
+  const values=[...params];
+  const clauses=[where];
+  const search=clean(req.query.search);
+  if(search){
+    values.push(`%${upper(search)}%`);
+    const n=values.length;
+    clauses.push(`(
+      UPPER(COALESCE(r.report_code,'')) LIKE $${n}
+      OR UPPER(COALESCE(r.source_report_number,'')) LIKE $${n}
+      OR UPPER(COALESCE(r.reporter_name,'')) LIKE $${n}
+      OR UPPER(COALESCE(r.location,'')) LIKE $${n}
+      OR UPPER(COALESCE(r.description,'')) LIKE $${n}
+      OR UPPER(COALESCE(r.cause_subtype,r.deviation_type,'')) LIKE $${n}
+      OR UPPER(COALESCE(u.name,r.supervisor_name_text,'')) LIKE $${n}
+    )`);
+  }
+  const limit=Math.min(Math.max(Number(req.query.limit||200),1),500);
+  const rows=(await pool.query(`
+    SELECT
+      r.id,r.report_code,r.source_report_number,r.business_unit_id,r.report_date,r.risk_level,
+      r.report_type,r.deviation_type,r.cause_category,r.cause_subtype,r.reporter_name,r.reporter_type,
+      r.location,r.description,r.corrective_action,r.status,r.progress_percent,r.due_date,r.lifted_at,
+      r.created_at,r.updated_at,
+      bu.name business_unit,ar.name reporting_area,ad.name reported_area,
+      COALESCE(u.name,r.supervisor_name_text,'SIN ASIGNAR') supervisor_name,
+      COALESCE((
+        SELECT MAX(al.created_at)
+        FROM audit_log al
+        WHERE al.entity_type='RAC' AND al.entity_id=r.id::text
+          AND al.action IN ('CREATE_RAC','ASSIGN_RAC','UPDATE_RAC_STATUS')
+      ),r.updated_at,r.created_at) last_change_at,
+      (SELECT COUNT(*)::int FROM audit_log al WHERE al.entity_type='RAC' AND al.entity_id=r.id::text AND al.action IN ('CREATE_RAC','ASSIGN_RAC','UPDATE_RAC_STATUS')) change_count,
+      (SELECT COUNT(*)::int FROM rac_evidence e WHERE e.rac_id=r.id) evidence_count
+    FROM racs r
+    LEFT JOIN business_units bu ON bu.id=r.business_unit_id
+    LEFT JOIN areas ar ON ar.id=r.reporting_area_id
+    LEFT JOIN areas ad ON ad.id=r.reported_area_id
+    LEFT JOIN users u ON u.id=r.supervisor_user_id
+    WHERE ${clauses.join(' AND ')}
+    ORDER BY last_change_at DESC,r.id DESC
+    LIMIT ${limit}
+  `,values)).rows;
+  if(!rows.length)return res.json([]);
+
+  const ids=rows.map(row=>Number(row.id));
+  const idTexts=ids.map(String);
+  const changes=(await pool.query(`
+    SELECT al.id,al.entity_id::int rac_id,al.action,al.details,al.created_at,
+      COALESCE(changer.name,'SISTEMA') changed_by
+    FROM audit_log al
+    LEFT JOIN users changer ON changer.id=al.user_id
+    WHERE al.entity_type='RAC'
+      AND al.entity_id=ANY($1::text[])
+      AND al.action IN ('CREATE_RAC','ASSIGN_RAC','UPDATE_RAC_STATUS')
+    ORDER BY al.created_at DESC,al.id DESC
+  `,[idTexts])).rows;
+  const evidence=(await pool.query(`
+    SELECT e.id,e.rac_id,e.evidence_type,e.comment,e.original_name,e.stored_name,e.mime_type,e.size_bytes,
+      e.drive_web_link,e.drive_status,e.uploaded_at,COALESCE(uploader.name,'USUARIO') uploaded_by_name,
+      asset.id asset_id
+    FROM rac_evidence e
+    LEFT JOIN users uploader ON uploader.id=e.uploaded_by
+    LEFT JOIN LATERAL (
+      SELECT fa.id
+      FROM file_assets fa
+      WHERE fa.entity_type='RAC'
+        AND fa.entity_id=e.rac_id::text
+        AND fa.stored_name=e.stored_name
+      ORDER BY fa.id DESC
+      LIMIT 1
+    ) asset ON TRUE
+    WHERE e.rac_id=ANY($1::int[])
+    ORDER BY e.uploaded_at DESC,e.id DESC
+  `,[ids])).rows;
+
+  const changesBy=new Map();
+  for(const item of changes){
+    if(!changesBy.has(item.rac_id))changesBy.set(item.rac_id,[]);
+    changesBy.get(item.rac_id).push(item);
+  }
+  const evidenceBy=new Map();
+  for(const item of evidence){
+    if(!evidenceBy.has(item.rac_id))evidenceBy.set(item.rac_id,[]);
+    evidenceBy.get(item.rac_id).push(item);
+  }
+  res.json(rows.map(row=>({
+    ...row,
+    changes:changesBy.get(Number(row.id))||[],
+    evidence:evidenceBy.get(Number(row.id))||[]
+  })));
+});
+
 racsRouter.post('/ai/classify',requireCapability('rac:create'),async(req,res)=>{
   const text=clean(req.body.text);if(!text)return res.status(400).json({error:'Escribe el texto original del trabajador'});
   res.json(await classifyRac(text));

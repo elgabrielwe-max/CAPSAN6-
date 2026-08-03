@@ -1,4 +1,4 @@
-# CAPSAN6 4.0.8 · Sistema Integral de Gestión SSOMA
+# CAPSAN6 4.0.9 · Sistema Integral de Gestión SSOMA
 
 CAPSAN6 4.0.0 es una reconstrucción completa del sistema. La interfaz, la arquitectura del servidor y el modelo relacional fueron creados nuevamente para que todos los módulos trabajen sobre una sola fuente de datos.
 
@@ -114,3 +114,11 @@ La presentación empresarial usada como referencia visual no se incluye como arc
 - Seguimiento RACS corregido con parámetros PostgreSQL tipados.
 - Registro de notas conectado estrictamente a tema, unidad y áreas asignadas; buscador DNI y PDF de asistencia conservados.
 - Importación multiperiodo con opción de importar todo, mes dominante o periodo específico.
+
+## Corrección 4.0.9
+
+- Nueva pestaña **Listado de cambios** dentro de Registro y levantamiento de RACS.
+- Información completa del RAC junto con su historial auditado.
+- Galería de evidencias con miniaturas de imágenes.
+- Ampliación de imágenes y visor de PDF al hacer clic.
+- Filtros por unidad, estado y búsqueda de RAC, reportante, lugar, causa o Supervisor.
