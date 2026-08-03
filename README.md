@@ -1,4 +1,4 @@
-# CAPSAN6 4.0.3 · Sistema Integral de Gestión SSOMA
+# CAPSAN6 4.0.6 · Sistema Integral de Gestión SSOMA
 
 CAPSAN6 4.0.0 es una reconstrucción completa del sistema. La interfaz, la arquitectura del servidor y el modelo relacional fueron creados nuevamente para que todos los módulos trabajen sobre una sola fuente de datos.
 
@@ -93,3 +93,8 @@ npm test
 ## Despliegue
 
 Lee `CONFIGURACION_RAILWAY_Y_DRIVE.md` y `MIGRACION_DESDE_CAPSAN6_3.md` antes de reemplazar el repositorio.
+
+
+## Paquete ligero para GitHub
+
+La presentación empresarial usada como referencia visual no se incluye como archivo binario porque supera el límite de 25 MB de la carga web de GitHub. El generador del PPT Ejecutivo reproduce el modelo desde código y no necesita esa presentación en producción.

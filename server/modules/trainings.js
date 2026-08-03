@@ -4,14 +4,22 @@ import XLSX from 'xlsx';
 import { authRequired, requireCapability, assertUnitAccess } from '../auth.js';
 import { pool, tx } from '../db.js';
 import { audit } from '../services/audit.js';
+import { saveUpload } from '../services/storage.js';
+import { queueAsset } from '../services/drive.js';
 
-const upload=multer({storage:multer.memoryStorage(),limits:{fileSize:15*1024*1024}});
+const upload=multer({storage:multer.memoryStorage(),limits:{fileSize:20*1024*1024}});
 export const trainingsRouter=Router();
 trainingsRouter.use(authRequired);
 
 const clean=v=>String(v||'').trim().replace(/\s+/g,' ');
 const upper=v=>clean(v).toUpperCase();
 const resultFor=(score,min)=>Number(score)>=Number(min)?'APROBADO':'DESAPROBADO';
+const isPdf=file=>file&&(file.mimetype==='application/pdf'||/\.pdf$/i.test(file.originalname||''));
+
+async function getTraining(id){return (await pool.query(`SELECT * FROM trainings WHERE id=$1`,[Number(id)])).rows[0];}
+async function assertTarget(trainingId,unitId,areaId){
+  return (await pool.query(`SELECT 1 FROM training_targets WHERE training_id=$1 AND business_unit_id=$2 AND (area_id IS NULL OR area_id=$3::int)`,[Number(trainingId),Number(unitId),areaId?Number(areaId):null])).rowCount>0;
+}
 
 trainingsRouter.get('/',requireCapability('training:grade'),async(req,res)=>{
   const unitIds=req.user.role==='MASTER'?null:req.user.units.map(x=>Number(x.id));
@@ -31,21 +39,44 @@ trainingsRouter.post('/',requireCapability('training:manage'),async(req,res)=>{
     if(id){row=(await client.query(`UPDATE trainings SET title=$1,description=$2,evaluation_topic=$3,start_date=$4,end_date=$5,approved_min=$6,score_min=$7,score_max=$8,status=$9,enabled=$10 WHERE id=$11 RETURNING *`,[title,clean(req.body.description)||null,upper(req.body.evaluationTopic)||null,req.body.startDate||null,req.body.endDate||null,Number(req.body.approvedMin||11),Number(req.body.scoreMin||0),Number(req.body.scoreMax||20),upper(req.body.status)||'PROGRAMADO',req.body.enabled!==false,Number(id)])).rows[0];}
     else{row=(await client.query(`INSERT INTO trainings(title,description,evaluation_topic,start_date,end_date,approved_min,failed_max,score_min,score_max,status,enabled,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,[title,clean(req.body.description)||null,upper(req.body.evaluationTopic)||null,req.body.startDate||null,req.body.endDate||null,Number(req.body.approvedMin||11),Number(req.body.approvedMin||11)-0.01,Number(req.body.scoreMin||0),Number(req.body.scoreMax||20),upper(req.body.status)||'PROGRAMADO',req.body.enabled!==false,req.user.id])).rows[0];}
     await client.query(`DELETE FROM training_targets WHERE training_id=$1`,[row.id]);
-    for(const target of targets){await client.query(`INSERT INTO training_targets(training_id,business_unit_id,area_id) VALUES($1,$2,$3) ON CONFLICT DO NOTHING`,[row.id,Number(target.businessUnitId),target.areaId?Number(target.areaId):null]);}
+    for(const target of targets)await client.query(`INSERT INTO training_targets(training_id,business_unit_id,area_id) VALUES($1,$2,$3) ON CONFLICT DO NOTHING`,[row.id,Number(target.businessUnitId),target.areaId?Number(target.areaId):null]);
     return row;
   });
   await audit(req,id?'UPDATE_TRAINING':'CREATE_TRAINING','TRAINING',training.id,{targets});res.json(training);
 });
 
 trainingsRouter.get('/:id/roster',requireCapability('training:grade'),async(req,res)=>{
-  const id=Number(req.params.id);const training=(await pool.query(`SELECT * FROM trainings WHERE id=$1`,[id])).rows[0];if(!training)return res.status(404).json({error:'Capacitación no encontrada'});
+  const id=Number(req.params.id);const training=await getTraining(id);if(!training)return res.status(404).json({error:'Capacitación no encontrada'});
   const unitId=Number(req.query.businessUnitId);if(!assertUnitAccess(req.user,unitId))return res.status(403).json({error:'Unidad fuera de tu alcance'});
   const areaId=req.query.areaId?Number(req.query.areaId):null;
-  const target=(await pool.query(`SELECT 1 FROM training_targets WHERE training_id=$1 AND business_unit_id=$2 AND (area_id IS NULL OR area_id=$3)`,[id,unitId,areaId])).rowCount;
-  if(!target)return res.status(400).json({error:'El tema no está asignado a esa unidad/área'});
+  if(!(await assertTarget(id,unitId,areaId)))return res.status(400).json({error:'El tema no está asignado a esa unidad/área'});
   const params=[id,unitId];let areaClause='';if(areaId){params.push(areaId);areaClause=`AND w.area_id=$3`;}
   const rows=(await pool.query(`SELECT w.id,w.dni,w.full_name,a.name area,w.position,w.guard,g.score,g.result,g.attendance_status,g.observation FROM workers w JOIN areas a ON a.id=w.area_id LEFT JOIN grades g ON g.worker_id=w.id AND g.training_id=$1 WHERE w.active=TRUE AND w.business_unit_id=$2 ${areaClause} ORDER BY a.name,w.full_name`,params)).rows;
   res.json({training,workers:rows});
+});
+
+trainingsRouter.get('/:id/attendance-files',requireCapability('training:grade'),async(req,res)=>{
+  const trainingId=Number(req.params.id),unitId=Number(req.query.businessUnitId),areaId=req.query.areaId?Number(req.query.areaId):null;
+  if(!(await getTraining(trainingId)))return res.status(404).json({error:'Capacitación no encontrada'});
+  if(!assertUnitAccess(req.user,unitId))return res.status(403).json({error:'Unidad fuera de tu alcance'});
+  const rows=(await pool.query(`SELECT taf.id,taf.training_id,taf.business_unit_id,taf.area_id,taf.created_at,fa.id file_asset_id,fa.original_name,fa.mime_type,fa.size_bytes,fa.drive_status,fa.drive_web_link,u.name uploaded_by_name
+    FROM training_attendance_files taf JOIN file_assets fa ON fa.id=taf.file_asset_id LEFT JOIN users u ON u.id=taf.uploaded_by
+    WHERE taf.training_id=$1 AND taf.business_unit_id=$2 AND ($3::int IS NULL OR taf.area_id=$3::int)
+    ORDER BY taf.created_at DESC`,[trainingId,unitId,areaId])).rows;
+  res.json(rows);
+});
+
+trainingsRouter.post('/:id/attendance-files',requireCapability('training:grade'),upload.single('file'),async(req,res)=>{
+  const trainingId=Number(req.params.id),unitId=Number(req.body.businessUnitId),areaId=req.body.areaId?Number(req.body.areaId):null;
+  const training=await getTraining(trainingId);if(!training)return res.status(404).json({error:'Capacitación no encontrada'});
+  if(!assertUnitAccess(req.user,unitId))return res.status(403).json({error:'Unidad fuera de tu alcance'});
+  if(!(await assertTarget(trainingId,unitId,areaId)))return res.status(400).json({error:'El tema no está asignado a esa unidad/área'});
+  if(!isPdf(req.file))return res.status(400).json({error:'Adjunta la lista de asistentes en formato PDF'});
+  const saved=await saveUpload(req.file,`capacitaciones/${trainingId}/asistencia`);
+  const queued=await queueAsset({entityType:'TRAINING_ATTENDANCE',entityId:trainingId,businessUnitId:unitId,saved,uploadedBy:req.user.id});
+  const record=(await pool.query(`INSERT INTO training_attendance_files(training_id,business_unit_id,area_id,file_asset_id,uploaded_by) VALUES($1,$2,$3,$4,$5) RETURNING *`,[trainingId,unitId,areaId,queued.asset.id,req.user.id])).rows[0];
+  await audit(req,'UPLOAD_TRAINING_ATTENDANCE','TRAINING',trainingId,{unitId,areaId,fileAssetId:queued.asset.id,originalName:saved.originalName});
+  res.status(201).json({...record,fileAssetId:queued.asset.id,drive:queued.drive});
 });
 
 trainingsRouter.post('/:id/grades',requireCapability('training:grade'),async(req,res)=>{

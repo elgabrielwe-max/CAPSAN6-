@@ -32,8 +32,11 @@ test('solo existe un PPT oficial de RACS, sin presentaciones interactivas o grup
   assert.doesNotMatch(files,/interactive|interactivo|grupal|training\/executive\.pptx/i);
 });
 
-test('las plantillas oficiales se incluyen en el proyecto',async()=>{
-  for(const file of ['templates/REPORTE_DIARIO_SEGURIDAD_MODELO_OFICIAL.pptx','templates/FLASH_REPORT_MODELO_OFICIAL.xls','templates/FLASH_REPORT_REFERENCIA.docx','templates/EJEMPLO_BASE_TRABAJADORES.xlsx'])await access(new URL(`../${file}`,import.meta.url));
+test('las plantillas funcionales y recursos compactos se incluyen en el proyecto',async()=>{
+  for(const file of ['templates/FLASH_REPORT_MODELO_OFICIAL.xls','templates/FLASH_REPORT_REFERENCIA.docx','templates/EJEMPLO_BASE_TRABAJADORES.xlsx','templates/assets/optimus-logo.png','templates/assets/optimus-wave-wide.png'])await access(new URL(`../${file}`,import.meta.url));
+  const generator=await read('server/reports/racExecutive.js');
+  assert.match(generator,/defineLayout\(\{name:'CAPSAN6_4X3'/);
+  assert.match(generator,/U\.E\.A CANDELARIA CHANCA/);
 });
 
 test('Drive utiliza estructura automática y registro de archivos',async()=>{

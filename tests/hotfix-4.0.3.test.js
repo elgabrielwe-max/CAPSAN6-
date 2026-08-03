@@ -13,9 +13,9 @@ test('importación RACS fuerza tipos compatibles para fechas y porcentaje', asyn
   assert.doesNotMatch(server, /CASE WHEN \$20>=100 THEN \$9 ELSE NULL END/);
 });
 
-test('la versión publicada corresponde al hotfix 4.0.3', async () => {
+test('la versión publicada conserva el hotfix de fechas dentro de 4.0.6', async () => {
   const app = await read('server/app.js');
   const pkg = JSON.parse(await read('package.json'));
-  assert.equal(pkg.version, '4.0.3');
-  assert.match(app, /4\.0\.3-TIPOS-FECHA-IMPORTACION-RACS/);
+  assert.equal(pkg.version, '4.0.6');
+  assert.match(app, /4\.0\.6-GITHUB-LIGERO-PPT-OFICIAL-RACS/);
 });

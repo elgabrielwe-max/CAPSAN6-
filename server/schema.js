@@ -2,6 +2,7 @@ import bcrypt from 'bcryptjs';
 import { createHash } from 'node:crypto';
 import { pool, tx } from './db.js';
 import { config } from './config.js';
+import { RAC_CAUSE_CATALOG, normalizeCauseText } from './racCauseCatalog.js';
 
 const q = sql => pool.query(sql);
 
@@ -30,6 +31,8 @@ async function ensureColumns() {
     `ALTER TABLE racs ADD COLUMN IF NOT EXISTS source_report_number VARCHAR(80)`,
     `ALTER TABLE racs ADD COLUMN IF NOT EXISTS cause_category VARCHAR(180)`,
     `ALTER TABLE racs ADD COLUMN IF NOT EXISTS cause_subtype VARCHAR(220)`,
+    `ALTER TABLE racs ADD COLUMN IF NOT EXISTS cause_category_id INTEGER`,
+    `ALTER TABLE racs ADD COLUMN IF NOT EXISTS cause_subtype_id INTEGER`,
     `ALTER TABLE racs ADD COLUMN IF NOT EXISTS close_comment TEXT`,
     `ALTER TABLE racs ADD COLUMN IF NOT EXISTS validation_comment TEXT`,
     `ALTER TABLE racs ADD COLUMN IF NOT EXISTS validation_requested_at TIMESTAMPTZ`,
@@ -207,6 +210,33 @@ export async function initSchema() {
       entered_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       UNIQUE(training_id, worker_id)
     );
+
+    CREATE TABLE IF NOT EXISTS rac_cause_categories (
+      id SERIAL PRIMARY KEY,
+      code VARCHAR(10) UNIQUE NOT NULL,
+      name VARCHAR(180) NOT NULL,
+      report_type VARCHAR(50) NOT NULL,
+      active BOOLEAN NOT NULL DEFAULT TRUE,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_by INTEGER REFERENCES users(id),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_rac_cause_categories_name ON rac_cause_categories(name);
+    CREATE TABLE IF NOT EXISTS rac_cause_subtypes (
+      id SERIAL PRIMARY KEY,
+      category_id INTEGER NOT NULL REFERENCES rac_cause_categories(id) ON DELETE CASCADE,
+      name VARCHAR(220) NOT NULL,
+      normalized_name VARCHAR(220) NOT NULL,
+      is_custom BOOLEAN NOT NULL DEFAULT FALSE,
+      active BOOLEAN NOT NULL DEFAULT TRUE,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_by INTEGER REFERENCES users(id),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE(category_id, normalized_name)
+    );
+    CREATE INDEX IF NOT EXISTS idx_rac_cause_subtypes_category ON rac_cause_subtypes(category_id,active,sort_order);
 
     CREATE TABLE IF NOT EXISTS racs (
       id SERIAL PRIMARY KEY,
@@ -399,6 +429,16 @@ export async function initSchema() {
       synced_at TIMESTAMPTZ
     );
     CREATE INDEX IF NOT EXISTS idx_file_assets_entity ON file_assets(entity_type, entity_id);
+    CREATE TABLE IF NOT EXISTS training_attendance_files (
+      id BIGSERIAL PRIMARY KEY,
+      training_id INTEGER NOT NULL REFERENCES trainings(id) ON DELETE CASCADE,
+      business_unit_id INTEGER NOT NULL REFERENCES business_units(id) ON DELETE CASCADE,
+      area_id INTEGER REFERENCES areas(id) ON DELETE SET NULL,
+      file_asset_id BIGINT NOT NULL UNIQUE REFERENCES file_assets(id) ON DELETE CASCADE,
+      uploaded_by INTEGER REFERENCES users(id),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_training_attendance_scope ON training_attendance_files(training_id,business_unit_id,area_id,created_at DESC);
 
     CREATE TABLE IF NOT EXISTS public_share_links (
       id BIGSERIAL PRIMARY KEY,
@@ -452,6 +492,42 @@ export async function initSchema() {
   for (const [name, code] of units) {
     await pool.query(`INSERT INTO business_units(name,code) VALUES($1,$2) ON CONFLICT(name) DO UPDATE SET code=COALESCE(business_units.code,EXCLUDED.code)`, [name, code]);
   }
+
+  // Catálogo institucional de causas y subcausas RACS.
+  for (let categoryIndex=0; categoryIndex<RAC_CAUSE_CATALOG.length; categoryIndex++) {
+    const category=RAC_CAUSE_CATALOG[categoryIndex];
+    const categoryRow=(await pool.query(`INSERT INTO rac_cause_categories(code,name,report_type,sort_order,active)
+      VALUES($1,$2,$3,$4,TRUE)
+      ON CONFLICT(code) DO UPDATE SET name=EXCLUDED.name,report_type=EXCLUDED.report_type,sort_order=EXCLUDED.sort_order,active=TRUE,updated_at=NOW()
+      RETURNING id`,[category.code,category.name,category.reportType,categoryIndex+1])).rows[0];
+    for (let subtypeIndex=0; subtypeIndex<category.subtypes.length; subtypeIndex++) {
+      const subtype=category.subtypes[subtypeIndex];
+      await pool.query(`INSERT INTO rac_cause_subtypes(category_id,name,normalized_name,is_custom,sort_order,active)
+        VALUES($1,$2,$3,FALSE,$4,TRUE)
+        ON CONFLICT(category_id,normalized_name) DO UPDATE SET name=EXCLUDED.name,sort_order=EXCLUDED.sort_order,active=TRUE,updated_at=NOW()`,
+        [categoryRow.id,subtype,normalizeCauseText(subtype),subtypeIndex+1]);
+    }
+  }
+
+  // Vincula RACS históricos con el catálogo sin borrar ni alterar textos no reconocidos.
+  await q(`UPDATE racs r SET cause_subtype_id=s.id,cause_category_id=c.id,cause_subtype=s.name,cause_category=c.name
+    FROM rac_cause_subtypes s JOIN rac_cause_categories c ON c.id=s.category_id
+    WHERE r.cause_subtype_id IS NULL
+      AND regexp_replace(translate(upper(COALESCE(r.cause_subtype,r.deviation_type,'')),'ÁÉÍÓÚÜÑ','AEIOUUN'),'[^A-Z0-9]+','','g')
+        = regexp_replace(s.normalized_name,'[^A-Z0-9]+','','g')`);
+  await q(`UPDATE racs r SET cause_category_id=c.id,cause_category=c.name
+    FROM rac_cause_categories c
+    WHERE r.cause_category_id IS NULL
+      AND regexp_replace(translate(upper(COALESCE(r.cause_category,'')),'ÁÉÍÓÚÜÑ','AEIOUUN'),'[^A-Z0-9]+','','g')
+        = regexp_replace(translate(upper(c.name),'ÁÉÍÓÚÜÑ','AEIOUUN'),'[^A-Z0-9]+','','g')`);
+  await q(`DO $$ BEGIN
+    IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conname='racs_cause_category_fk') THEN
+      ALTER TABLE racs ADD CONSTRAINT racs_cause_category_fk FOREIGN KEY(cause_category_id) REFERENCES rac_cause_categories(id) ON DELETE SET NULL;
+    END IF;
+    IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conname='racs_cause_subtype_fk') THEN
+      ALTER TABLE racs ADD CONSTRAINT racs_cause_subtype_fk FOREIGN KEY(cause_subtype_id) REFERENCES rac_cause_subtypes(id) ON DELETE SET NULL;
+    END IF;
+  END $$`);
 
   await q(`
     DO $$
@@ -512,6 +588,8 @@ export async function initSchema() {
 
   await q(`INSERT INTO schema_migrations(version) VALUES('4.0.2') ON CONFLICT DO NOTHING`);
   await q(`INSERT INTO schema_migrations(version) VALUES('4.0.3') ON CONFLICT DO NOTHING`);
+  await q(`INSERT INTO schema_migrations(version) VALUES('4.0.4') ON CONFLICT DO NOTHING`);
+  await q(`INSERT INTO schema_migrations(version) VALUES('4.0.6') ON CONFLICT DO NOTHING`);
   await ensureMaster();
   await applyMasterRecovery();
 }

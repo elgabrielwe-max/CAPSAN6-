@@ -8,6 +8,7 @@ import { authRequired, requireCapability, assertUnitAccess } from '../auth.js';
 import { pool, tx } from '../db.js';
 import { analyzeRacWorkbook } from '../imports/racWorkbook.js';
 import { classifyRac } from '../services/ai.js';
+import { fetchRacCauseCatalog, resolveRacCauseSelection, createRacCauseSubtype } from '../services/racCatalog.js';
 import { saveUpload } from '../services/storage.js';
 import { queueAsset } from '../services/drive.js';
 import { audit, notify } from '../services/audit.js';
@@ -62,16 +63,29 @@ racsRouter.post('/ai/classify',requireCapability('rac:create'),async(req,res)=>{
   res.json(await classifyRac(text));
 });
 
+racsRouter.get('/cause-catalog',requireCapability('rac:view'),async(req,res)=>{
+  res.json(await fetchRacCauseCatalog(pool));
+});
+
+racsRouter.post('/cause-subtypes',requireCapability('rac:catalog.manage'),async(req,res)=>{
+  const subtype=await tx(client=>createRacCauseSubtype(client,{categoryId:req.body.categoryId,name:req.body.name,createdBy:req.user.id}));
+  await audit(req,'CREATE_RAC_CAUSE_SUBTYPE','RAC_CAUSE_SUBTYPE',subtype.id,{categoryId:subtype.categoryId,name:subtype.name});
+  res.status(201).json(subtype);
+});
+
 racsRouter.post('/',requireCapability('rac:create'),async(req,res)=>{
   const b=req.body;const unitId=Number(b.businessUnitId);if(!assertUnitAccess(req.user,unitId))return res.status(403).json({error:'Unidad fuera de tu alcance'});
   const description=upper(b.description);if(!description)return res.status(400).json({error:'Descripción requerida'});
-  const ai=b.useAi===false?null:await classifyRac(description);const reportDate=b.reportDate||new Date().toISOString().slice(0,10);const risk=upper(b.riskLevel)||'BAJO';
+  const ai=b.useAi===false?null:await classifyRac(description);const reportDate=b.reportDate||new Date().toISOString().slice(0,10);const risk=upper(b.riskLevel)||'BAJO';const reportType=upper(b.reportType)||ai?.reportType||'CONDICION SUBESTANDAR';
   const row=await tx(async client=>{
     const reporting=await areaId(client,b.reportingArea,unitId);const reported=await areaId(client,b.reportedArea||b.reportingArea,unitId);const bu=await unit(client,unitId);if(!bu)throw Object.assign(new Error('Unidad no encontrada'),{status:404});
+    const selectedCause=await resolveRacCauseSelection(client,{categoryId:b.causeCategoryId,subtypeId:b.causeSubtypeId,categoryName:b.causeCategory,subtypeName:b.causeSubtype,reportType,fallbackText:description});
     const prefix=bu.code||'RAC';const sequence=Number((await client.query(`SELECT COUNT(*)::int total FROM racs WHERE business_unit_id=$1 AND report_date=$2`,[unitId,reportDate])).rows[0].total)+1;const code=`${prefix}-${reportDate.replaceAll('-','')}-${String(sequence).padStart(4,'0')}-${crypto.randomBytes(2).toString('hex').toUpperCase()}`;
     const result=await client.query(`INSERT INTO racs(report_code,source_report_number,business_unit_id,reporting_area_id,reported_area_id,reporter_name,reporter_type,location,report_date,risk_level,report_type,deviation_type,cause_category,cause_subtype,description,supervisor_user_id,supervisor_name_text,corrective_action,status,progress_percent,due_date,environmental_flag,environmental_category,environmental_confidence,created_by)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,'PENDIENTE',0,$19,$20,$21,$22,$23) RETURNING *`,[
-      code,clean(b.sourceReportNumber)||null,unitId,reporting,reported,upper(b.reporterName),upper(b.reporterType)||'COLABORADOR',upper(b.location)||null,reportDate,risk,upper(b.reportType)||ai?.reportType||'CONDICION SUBESTANDAR',upper(b.causeSubtype)||ai?.causeSubtype||'OTROS',upper(b.causeCategory)||ai?.causeCategory||'OTROS',upper(b.causeSubtype)||ai?.causeSubtype||'OTROS',description,b.supervisorUserId?Number(b.supervisorUserId):req.user.role==='SUPERVISOR'?req.user.id:null,upper(b.supervisorName) || (req.user.role==='SUPERVISOR' ? req.user.name : null),upper(b.correctiveAction)||null,dueDate(reportDate,risk),Boolean(ai?.environmental),ai?.environmentalCategory||null,ai?.confidence||null,req.user.id]);
+      code,clean(b.sourceReportNumber)||null,unitId,reporting,reported,upper(b.reporterName),upper(b.reporterType)||'COLABORADOR',upper(b.location)||null,reportDate,risk,reportType,selectedCause.subtype.name,selectedCause.category.name,selectedCause.subtype.name,description,b.supervisorUserId?Number(b.supervisorUserId):req.user.role==='SUPERVISOR'?req.user.id:null,upper(b.supervisorName) || (req.user.role==='SUPERVISOR' ? req.user.name : null),upper(b.correctiveAction)||null,dueDate(reportDate,risk),Boolean(ai?.environmental||selectedCause.category.code==='VI'),selectedCause.category.code==='VI'?selectedCause.subtype.name:ai?.environmentalCategory||null,ai?.confidence||null,req.user.id]);
+    await client.query(`UPDATE racs SET cause_category_id=$1,cause_subtype_id=$2 WHERE id=$3`,[selectedCause.category.id,selectedCause.subtype.id,result.rows[0].id]);
+    result.rows[0].cause_category_id=selectedCause.category.id;result.rows[0].cause_subtype_id=selectedCause.subtype.id;
     if(result.rows[0].supervisor_user_id)await client.query(`INSERT INTO rac_assignments(rac_id,supervisor_user_id,assigned_by,active) VALUES($1,$2,$3,TRUE) ON CONFLICT DO NOTHING`,[result.rows[0].id,result.rows[0].supervisor_user_id,req.user.id]);
     return result.rows[0];
   });
@@ -103,10 +117,10 @@ racsRouter.post('/import',requireCapability('rac:import'),upload.single('file'),
         detected_period,rows_received,total_rows,rows_valid,rows_rejected,
         error_rows,status,summary
       )
-      VALUES($1,$1,$2,$3,$3,$4,$5,$5,$6,$7,$7,'PROCESANDO',$8::jsonb)
+      VALUES($1::text,$2::text,$3::int,$4::int,$4::int,$5::varchar,$6::int,$6::int,$7::int,$8::int,$8::int,'PROCESANDO',$9::jsonb)
       RETURNING id
     `,[
-      req.file.originalname,bu.id,req.user.id,analysis.dominantPeriod,
+      req.file.originalname,req.file.originalname,bu.id,req.user.id,analysis.dominantPeriod,
       analysis.totalRows,analysis.validRows,analysis.errors.length,
       JSON.stringify({periods:analysis.periods,warnings:analysis.warnings})
     ])).rows[0];
@@ -135,6 +149,7 @@ racsRouter.post('/import',requireCapability('rac:import'),upload.single('file'),
       const reporting=await resolveArea(r.reportingArea);
       const reported=await resolveArea(r.reportedArea);
       const matchedSupervisor=supervisors.get(normalizedName(r.supervisorName))||null;
+      const selectedCause=await resolveRacCauseSelection(client,{categoryName:r.causeCategory,subtypeName:r.causeSubtype,reportType:r.reportType,fallbackText:`${r.causeSubtype||''} ${r.description||''}`});
       const existing=(await client.query(`SELECT id FROM racs WHERE report_code=$1`,[r.internalCode])).rows[0];
       let racId;
 
@@ -174,10 +189,10 @@ racsRouter.post('/import',requireCapability('rac:import'),upload.single('file'),
           RETURNING id
         `,[
           r.sourceReportNumber,bu.id,reporting,reported,r.reporterName,r.reporterType,
-          r.location,r.reportDate,r.riskLevel,r.reportType,r.deviationType,r.causeCategory,
-          r.causeSubtype,r.description,matchedSupervisor?.id||null,r.supervisorName||null,
+          r.location,r.reportDate,r.riskLevel,selectedCause.category.reportType,selectedCause.subtype.name,selectedCause.category.name,
+          selectedCause.subtype.name,r.description,matchedSupervisor?.id||null,r.supervisorName||null,
           r.correctiveAction||null,r.status,r.progressPercent,dueDate(r.reportDate,r.riskLevel),
-          r.environmentalFlag,r.environmentalCategory,r.environmentalConfidence,r.sourceFile,
+          Boolean(r.environmentalFlag||selectedCause.category.code==='VI'),selectedCause.category.code==='VI'?selectedCause.subtype.name:r.environmentalCategory,r.environmentalConfidence,r.sourceFile,
           r.sourceSheet,r.sourceRow,batch.id,existing.id
         ])).rows[0].id;
         updated++;
@@ -198,14 +213,16 @@ racsRouter.post('/import',requireCapability('rac:import'),upload.single('file'),
           RETURNING id
         `,[
           r.internalCode,r.sourceReportNumber,bu.id,reporting,reported,r.reporterName,r.reporterType,
-          r.location,r.reportDate,r.riskLevel,r.reportType,r.deviationType,r.causeCategory,
-          r.causeSubtype,r.description,matchedSupervisor?.id||null,r.supervisorName||null,
+          r.location,r.reportDate,r.riskLevel,selectedCause.category.reportType,selectedCause.subtype.name,selectedCause.category.name,
+          selectedCause.subtype.name,r.description,matchedSupervisor?.id||null,r.supervisorName||null,
           r.correctiveAction||null,r.status,r.progressPercent,dueDate(r.reportDate,r.riskLevel),
-          r.environmentalFlag,r.environmentalCategory,r.environmentalConfidence,r.sourceFile,
+          Boolean(r.environmentalFlag||selectedCause.category.code==='VI'),selectedCause.category.code==='VI'?selectedCause.subtype.name:r.environmentalCategory,r.environmentalConfidence,r.sourceFile,
           r.sourceSheet,r.sourceRow,batch.id,req.user.id
         ])).rows[0].id;
         inserted++;
       }
+
+      await client.query(`UPDATE racs SET cause_category_id=$1,cause_subtype_id=$2 WHERE id=$3`,[selectedCause.category.id,selectedCause.subtype.id,racId]);
 
       if(matchedSupervisor){
         await client.query(`UPDATE rac_assignments SET active=FALSE WHERE rac_id=$1 AND supervisor_user_id<>$2 AND active=TRUE`,[racId,matchedSupervisor.id]);
