@@ -1,4 +1,13 @@
-# CAPSAN6 4.0.18 · Sistema Integral de Gestión SSOMA
+# CAPSAN6 4.0.19 · Sistema Integral de Gestión SSOMA
+
+
+## Hotfix 4.0.19 · Depuración RACS y auditoría resistente
+
+- Corrige el error PostgreSQL `value too long for type character varying(80)` al depurar numerosos RACS.
+- La auditoría de la depuración usa una referencia corta y guarda la lista completa de IDs dentro de `details` JSONB.
+- Migra `audit_log.entity_id` a `TEXT` en despliegues existentes.
+- Una falla secundaria de auditoría ya no derriba el servidor ni oculta el resultado de una operación principal.
+
 
 
 ## Mejora 4.0.18 · Planes y evidencias SSOMA completos

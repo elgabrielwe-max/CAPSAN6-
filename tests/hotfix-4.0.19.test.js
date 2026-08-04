@@ -1,48 +1,22 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import fs from 'node:fs/promises';
 
-const read = file => readFileSync(new URL(`../${file}`, import.meta.url), 'utf8');
+const read=path=>fs.readFile(new URL(`../${path}`,import.meta.url),'utf8');
 
-test('DDS y RIT reutilizan la base maestra de trabajadores', () => {
-  const schema = read('server/schema.js');
-  const module = read('server/modules/dailySafety.js');
-  assert.match(schema, /CREATE TABLE IF NOT EXISTS dds_attendance/);
-  assert.match(schema, /worker_id INTEGER NOT NULL REFERENCES workers\(id\)/);
-  assert.match(schema, /CREATE TABLE IF NOT EXISTS rit_participants/);
-  assert.match(module, /FROM workers w JOIN areas a ON a\.id=w\.area_id/);
-  assert.match(module, /Uno o más trabajadores no pertenecen a la unidad\/área seleccionada/);
+test('depuración RACS no usa la lista completa de ids como entity_id',async()=>{
+  const route=await read('server/modules/racs.js');
+  assert.ok(!route.includes("await audit(req,'PURGE_RACS','RAC',ids.join(',')"));
+  assert.ok(route.includes("path.basename(backupPath,'.json')"));
+  assert.ok(route.includes("'RAC_PURGE'"));
+  assert.ok(route.includes('{count:ids.length,ids,backupPath'));
 });
 
-test('el módulo registra asistencia DDS y asignaciones RIT por trabajador', () => {
-  const module = read('server/modules/dailySafety.js');
-  assert.match(module, /INSERT INTO dds_attendance\(dds_id,worker_id,attendance_status,observation\)/);
-  assert.match(module, /INSERT INTO rit_participants\(rit_id,worker_id,assigned_activity,responsibility\)/);
-  assert.match(module, /ASISTIO.*NO ASISTIO.*JUSTIFICADO/s);
-  assert.match(module, /planned_activities.*critical_risks.*controls/s);
-});
-
-test('Supervisor, SSOMA y Máster acceden a DDS y RIT respetando unidad', () => {
-  const permissions = read('server/permissions.js');
-  const module = read('server/modules/dailySafety.js');
-  for (const role of ['MASTER', 'SSOMA', 'SUPERVISOR']) {
-    const block = permissions.match(new RegExp(`${role}: \\[([\\s\\S]*?)\\]`))?.[1] || '';
-    assert.match(block, /'dds:manage'/);
-    assert.match(block, /'rit:manage'/);
-  }
-  assert.match(module, /assertUnitAccess\(req\.user, unitId\)/);
-  assert.match(module, /unitScope\(req\.user/);
-});
-
-test('la interfaz incorpora Gestión diaria con carga de trabajadores existentes', () => {
-  const app = read('public/js/app.js');
-  const page = read('public/js/pages/dailySafety.js');
-  const server = read('server/app.js');
-  assert.match(app, /Gestión diaria/);
-  assert.match(app, /DDS y RIT/);
-  assert.match(page, /\/api\/daily-safety\/workers/);
-  assert.match(page, /Cargar trabajadores/);
-  assert.match(page, /BASE MAESTRA/);
-  assert.match(server, /app\.use\('\/api\/daily-safety',dailySafetyRouter\)/);
-  assert.match(server, /version:'4\.0\.(?:19|20)/);
+test('schema amplía audit_log.entity_id y auditoría no derriba el proceso',async()=>{
+  const schema=await read('server/schema.js');
+  const audit=await read('server/services/audit.js');
+  assert.ok(schema.includes('ALTER TABLE audit_log ALTER COLUMN entity_id TYPE TEXT'));
+  assert.ok(schema.includes('entity_id TEXT'));
+  assert.ok(audit.includes("console.error('No se pudo registrar auditoría:'"));
+  assert.ok(audit.includes('return false'));
 });

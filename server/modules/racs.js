@@ -426,5 +426,7 @@ racsRouter.post('/purge/execute',requireCapability('rac:purge'),async(req,res)=>
   const selected=(await pool.query(`SELECT * FROM racs WHERE ${where} ORDER BY id`,params)).rows;const phrase=`ELIMINAR ${selected.length} RACS`;if(req.body.phrase!==phrase)return res.status(409).json({error:`Escribe exactamente: ${phrase}`});
   const backupDir=path.join(config.uploadDir,'purge-backups');await fs.mkdir(backupDir,{recursive:true});const backupPath=path.join(backupDir,`racs-${new Date().toISOString().replace(/[:.]/g,'-')}.json`);const ids=selected.map(x=>x.id);const evidence=ids.length?(await pool.query(`SELECT * FROM rac_evidence WHERE rac_id=ANY($1::int[])`,[ids])).rows:[];await fs.writeFile(backupPath,JSON.stringify({createdAt:new Date().toISOString(),filters:{unitId,from,to},racs:selected,evidence},null,2));
   await tx(async client=>{if(ids.length)await client.query(`DELETE FROM system_notifications WHERE entity_type='RAC' AND entity_id=ANY($1::text[])`,[ids.map(String)]);if(ids.length)await client.query(`DELETE FROM racs WHERE id=ANY($1::int[])`,[ids]);});
-  await audit(req,'PURGE_RACS','RAC',ids.join(','),{count:ids.length,backupPath});res.json({deleted:ids.length,backupPath});
+  const purgeReference=path.basename(backupPath,'.json');
+  await audit(req,'PURGE_RACS','RAC_PURGE',purgeReference,{count:ids.length,ids,backupPath,filters:{unitId,from,to}});
+  res.json({deleted:ids.length,backupPath,purgeReference});
 });
