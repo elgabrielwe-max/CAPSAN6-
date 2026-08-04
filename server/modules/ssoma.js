@@ -25,7 +25,28 @@ ssomaRouter.post('/plans',async(req,res)=>{
     :await pool.query(`INSERT INTO ssoma_work_plans(plan_date,business_unit_id,ssoma_user_id,objective,activities,pending_summary,status,created_by) VALUES($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7,$8) RETURNING *`,values);
   await audit(req,'UPSERT_SSOMA_PLAN','SSOMA_PLAN',result.rows[0].id);res.json(result.rows[0]);
 });
-ssomaRouter.get('/evidence',async(req,res)=>{const unitIds=req.user.role==='MASTER'?null:req.user.units.map(x=>Number(x.id));res.json((await pool.query(`SELECT e.*,bu.name business_unit,u.name ssoma_name,r.report_code FROM ssoma_evidence e JOIN business_units bu ON bu.id=e.business_unit_id JOIN users u ON u.id=e.ssoma_user_id LEFT JOIN racs r ON r.id=e.rac_id WHERE ($1::int[] IS NULL OR e.business_unit_id=ANY($1::int[])) ORDER BY e.evidence_date DESC,e.id DESC LIMIT 300`,[unitIds])).rows);});
+ssomaRouter.get('/evidence',async(req,res)=>{
+  const unitIds=req.user.role==='MASTER'?null:req.user.units.map(x=>Number(x.id));
+  const rows=(await pool.query(`
+    SELECT e.*,bu.name business_unit,u.name ssoma_name,r.report_code,
+      fa.id asset_id,fa.created_at asset_created_at
+    FROM ssoma_evidence e
+    JOIN business_units bu ON bu.id=e.business_unit_id
+    JOIN users u ON u.id=e.ssoma_user_id
+    LEFT JOIN racs r ON r.id=e.rac_id
+    LEFT JOIN LATERAL (
+      SELECT id,created_at
+      FROM file_assets
+      WHERE entity_type='SSOMA_EVIDENCE' AND entity_id=e.id::text
+      ORDER BY id DESC
+      LIMIT 1
+    ) fa ON TRUE
+    WHERE ($1::int[] IS NULL OR e.business_unit_id=ANY($1::int[]))
+    ORDER BY e.evidence_date DESC,e.id DESC
+    LIMIT 300
+  `,[unitIds])).rows;
+  res.json(rows);
+});
 ssomaRouter.post('/evidence',upload.single('file'),async(req,res)=>{
   if(!req.file)return res.status(400).json({error:'Adjunta la evidencia'});const unitId=Number(req.body.businessUnitId);if(!assertUnitAccess(req.user,unitId))return res.status(403).json({error:'Unidad fuera de tu alcance'});const saved=await saveUpload(req.file,`ssoma/${unitId}`);const temp=await pool.query(`INSERT INTO ssoma_evidence(business_unit_id,rac_id,ssoma_user_id,evidence_date,title,description,original_name,stored_name,mime_type,size_bytes,uploaded_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,[unitId,req.body.racId?Number(req.body.racId):null,req.user.id,req.body.evidenceDate||new Date().toISOString().slice(0,10),clean(req.body.title),clean(req.body.description)||null,saved.originalName,saved.storedName,saved.mimeType,saved.size,req.user.id]);const row=temp.rows[0];const asset=await queueAsset({entityType:'SSOMA_EVIDENCE',entityId:row.id,businessUnitId:unitId,saved,uploadedBy:req.user.id});await pool.query(`UPDATE ssoma_evidence SET drive_file_id=$1,drive_web_link=$2,drive_folder_path=$3,drive_status=$4 WHERE id=$5`,[asset.drive.fileId||null,asset.drive.webViewLink||null,asset.drive.folderPath||null,asset.drive.status,row.id]);await audit(req,'UPLOAD_SSOMA_EVIDENCE','SSOMA_EVIDENCE',row.id,{racId:req.body.racId||null});res.json({...row,drive:asset.drive});
 });

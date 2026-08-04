@@ -14,6 +14,6 @@ test('versión 4.0.14 publicada y cache renovada',async()=>{
   const index=await read('public/index.html');
   const app=await read('server/app.js');
   assert.ok(Number(pkg.version.split('.').at(-1))>=15);
-  assert.match(index,/v=4015/);
+  assert.match(index,/v=4018/);
   assert.match(app,/4\.0\.15-ASIGNACION-AUTOMATICA-TODOS-SUPERVISORES-POR-UNIDAD/);
 });

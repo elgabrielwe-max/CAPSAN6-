@@ -1,4 +1,13 @@
-# CAPSAN6 4.0.20 · Sistema Integral de Gestión SSOMA
+# CAPSAN6 4.0.18 · Sistema Integral de Gestión SSOMA
+
+
+## Mejora 4.0.18 · Planes y evidencias SSOMA completos
+
+- Agrega el botón **Ver plan completo** en Planes recientes.
+- Muestra objetivo, actividades, estado, pendientes RACS y evidencias asociadas por unidad y fecha.
+- Agrega el botón **Ver evidencia** con descripción completa, metadatos y archivo.
+- Permite previsualizar imágenes, PDF, video y audio; otros formatos pueden descargarse.
+- Mantiene el control de acceso por unidad y descarga autenticada desde Railway.
 
 ## Corrección 4.0.16 · Depuración de RACS
 
@@ -6,25 +15,6 @@
 - Valida la frase exacta y la contraseña Máster antes de ejecutar.
 - Evita dobles clics y muestra la cantidad realmente eliminada.
 
-
-
-
-## Nuevo 4.0.20 · Escaneado de asistentes en DDS y RIT
-
-- El supervisor puede adjuntar la lista física firmada o escaneada en PDF, JPG, PNG, WEBP, HEIC o HEIF.
-- El escaneado queda vinculado al DDS o RIT correspondiente, junto con la asistencia digital basada en los trabajadores existentes.
-- Los archivos se visualizan desde el registro y se identifican en el historial.
-- Tamaño máximo por archivo: 25 MB.
-
-## Nuevo módulo 4.0.19 · DDS y Reunión de Inicio de Turno
-
-- DDS con fecha, unidad, área, turno, guardia, tema, objetivo, duración y observaciones.
-- Asistencia vinculada directamente a la base maestra de trabajadores existente.
-- Estados de asistencia: asistió, no asistió y justificado.
-- RIT con actividades planificadas, riesgos críticos, controles, restricciones y compromisos.
-- Asignación de actividades y responsabilidades por trabajador.
-- Historial, edición y seguimiento por unidad y periodo.
-- Acceso para Máster, SSOMA y Supervisor, respetando las unidades vinculadas a cada perfil.
 
 CAPSAN6 4.0.0 es una reconstrucción completa del sistema. La interfaz, la arquitectura del servidor y el modelo relacional fueron creados nuevamente para que todos los módulos trabajen sobre una sola fuente de datos.
 
