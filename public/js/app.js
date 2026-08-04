@@ -4,11 +4,11 @@ import { $,toast,errorBox,modal } from './ui.js';
 import { dashboardPage } from './pages/dashboard.js';
 import { trainingPlanPage,trainingGradesPage,trainingDashboardPage } from './pages/training.js';
 import { racDashboardPage,racOperationsPage } from './pages/racs.js';
-import { unitsAreasPage,usersPage,racPurgePage,workersPage } from './pages/admin.js?v=4021';
+import { unitsAreasPage,usersPage,racPurgePage,workersPage } from './pages/admin.js?v=4022';
 import { environmentPage } from './pages/environment.js';
-import { ssomaPage,resourcesPage } from './pages/ssoma.js?v=4021';
+import { ssomaPage,resourcesPage } from './pages/ssoma.js?v=4022';
 import { incidentsPage } from './pages/incidents.js';
-import { ritDailyPage,idsPage } from './pages/preventive.js?v=4021';
+import { ritDailyPage,idsPage } from './pages/preventive.js?v=4022';
 
 const root=document.getElementById('root');
 const routes={dashboard:dashboardPage,trainingPlan:trainingPlanPage,trainingGrades:trainingGradesPage,trainingDashboard:trainingDashboardPage,racDashboard:racDashboardPage,racOperations:racOperationsPage,unitsAreas:unitsAreasPage,users:usersPage,racPurge:racPurgePage,workers:workersPage,environment:environmentPage,ssoma:ssomaPage,resources:resourcesPage,incidents:incidentsPage,ritDaily:ritDailyPage,ids:idsPage};

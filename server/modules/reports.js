@@ -97,7 +97,8 @@ async function racControlData(query,user){
         COUNT(*) FILTER(WHERE status='DEVUELTO PARA CORRECCION')::int returned,
         COUNT(*) FILTER(WHERE status='LEVANTADO')::int lifted,
         COUNT(*) FILTER(WHERE status='LEVANTADO' AND has_final_evidence)::int lifted_with_evidence,
-        COUNT(*) FILTER(WHERE status='LEVANTADO' AND NOT has_final_evidence)::int lifted_without_evidence,
+        COUNT(*) FILTER(WHERE status='LEVANTADO' AND NOT evidence_required)::int lifted_no_evidence_required,
+        COUNT(*) FILTER(WHERE status='LEVANTADO' AND evidence_required AND NOT has_final_evidence)::int lifted_without_evidence,
         COUNT(*) FILTER(WHERE status<>'LEVANTADO' AND due_date<CURRENT_DATE)::int overdue,
         COUNT(*) FILTER(WHERE status<>'LEVANTADO' AND due_date=CURRENT_DATE)::int due_today,
         COUNT(*) FILTER(WHERE status<>'LEVANTADO' AND risk_level='ALTO' AND due_date<CURRENT_DATE)::int high_overdue
@@ -109,6 +110,7 @@ async function racControlData(query,user){
       COALESCE(rc.pending,0)::int pending,COALESCE(rc.in_process,0)::int in_process,
       COALESCE(rc.pending_validation,0)::int pending_validation,COALESCE(rc.returned,0)::int returned,
       COALESCE(rc.lifted,0)::int lifted,COALESCE(rc.lifted_with_evidence,0)::int lifted_with_evidence,
+      COALESCE(rc.lifted_no_evidence_required,0)::int lifted_no_evidence_required,
       COALESCE(rc.lifted_without_evidence,0)::int lifted_without_evidence,COALESCE(rc.overdue,0)::int overdue,
       COALESCE(rc.due_today,0)::int due_today,COALESCE(rc.high_overdue,0)::int high_overdue
     FROM scoped_units su LEFT JOIN worker_counts wc ON wc.business_unit_id=su.id
@@ -123,7 +125,8 @@ async function racControlData(query,user){
     )
     SELECT r.id,r.report_code,bu.name business_unit,r.report_date,r.due_date,r.risk_level,r.status,
       COALESCE((SELECT string_agg(su.name, ', ' ORDER BY su.name) FROM rac_assignments ra JOIN users su ON su.id=ra.supervisor_user_id WHERE ra.rac_id=r.id AND ra.active=TRUE),u.name,r.supervisor_name_text,'SIN ASIGNAR') supervisor_name,
-      ar.name reporting_area,r.location,r.description,
+      ar.name reporting_area,r.location,r.description,COALESCE(r.evidence_required,TRUE) evidence_required,
+      r.evidence_exemption_reason,r.evidence_exempted_at,
       EXISTS(SELECT 1 FROM rac_evidence e WHERE e.rac_id=r.id AND e.evidence_type='FINAL') has_final_evidence,
       (r.status<>'LEVANTADO' AND r.due_date<CURRENT_DATE) is_overdue,
       CASE WHEN r.status<>'LEVANTADO' AND r.due_date<CURRENT_DATE THEN CURRENT_DATE-r.due_date ELSE 0 END::int days_overdue

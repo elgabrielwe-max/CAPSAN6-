@@ -1,8 +1,8 @@
-# CAPSAN6 4.0.21 · Sistema Integral de Gestión SSOMA
+# CAPSAN6 4.0.22 · Sistema Integral de Gestión SSOMA
 
 
 
-## Mejora 4.0.21 · Unidades automáticas y control de plazos RACS
+## Mejora 4.0.22 · Cierres RACS que no requieren evidencia
 
 - Agrega a los perfiles SSOMA/Supervisor la opción **Todas las unidades actuales y futuras**.
 - Las unidades nuevas se propagan automáticamente a los perfiles con ese alcance.
@@ -201,7 +201,19 @@ La presentación empresarial usada como referencia visual no se incluye como arc
 Al registrar un RAC, el sistema consulta la unidad seleccionada y asigna automáticamente a todos los usuarios activos con rol SUPERVISOR vinculados a esa unidad. La interfaz muestra previamente la lista de supervisores que recibirán el RAC.
 
 
-## RIT Diario e IDS · 4.0.21
+## Cierre sin evidencia requerida · 4.0.22
+
+SSOMA o Máster puede cerrar un RAC como **LEVANTADO** marcando **No requiere evidencia**, siempre con una justificación obligatoria. Estos cierres:
+
+- cuentan dentro del total de levantados y del porcentaje de cierre;
+- no se mezclan con “levantados con evidencia”;
+- se muestran en el indicador independiente **No requiere evidencia**;
+- quedan auditados con usuario, fecha y motivo;
+- aparecen en una hoja específica del Excel de control RACS.
+
+Los cierres antiguos sin archivo y sin excepción permanecen como **Sin sustento** para su regularización.
+
+## RIT Diario e IDS · 4.0.22
 
 - El antiguo DDS vuelve como **RIT Diario** (Reunión de Inicio de Turno).
 - **IDS** se mantiene como módulo independiente de desempeño individual.

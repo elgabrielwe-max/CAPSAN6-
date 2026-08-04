@@ -97,6 +97,7 @@ racsRouter.get('/changes',requireCapability('rac:view'),async(req,res)=>{
       r.id,r.report_code,r.source_report_number,r.business_unit_id,r.report_date,r.risk_level,
       r.report_type,r.deviation_type,r.cause_category,r.cause_subtype,r.reporter_name,r.reporter_type,
       r.location,r.description,r.corrective_action,r.status,r.progress_percent,r.due_date,r.lifted_at,
+      r.evidence_required,r.evidence_exemption_reason,r.evidence_exempted_at,r.evidence_exempted_by,
       r.created_at,r.updated_at,
       bu.name business_unit,ar.name reporting_area,ad.name reported_area,
       COALESCE((SELECT string_agg(su.name, ', ' ORDER BY su.name) FROM rac_assignments sra JOIN users su ON su.id=sra.supervisor_user_id WHERE sra.rac_id=r.id AND sra.active=TRUE AND su.active=TRUE AND su.deleted_at IS NULL),u.name,r.supervisor_name_text,'SIN ASIGNAR') supervisor_name,
@@ -384,17 +385,38 @@ racsRouter.post('/:id/assign',requireCapability('rac:assign'),async(req,res)=>{
 });
 
 racsRouter.post('/:id/status',requireCapability('rac:followup'),upload.single('evidence'),async(req,res)=>{
-  const id=Number(req.params.id);const rac=(await pool.query(`SELECT * FROM racs WHERE id=$1`,[id])).rows[0];if(!rac)return res.status(404).json({error:'RAC no encontrado'});if(!assertUnitAccess(req.user,rac.business_unit_id))return res.status(403).json({error:'RAC fuera de tu alcance'});
-  const target=upper(req.body.status);const allowed=['PENDIENTE','EN PROCESO','PENDIENTE DE VALIDACION','DEVUELTO PARA CORRECCION','LEVANTADO'];if(!allowed.includes(target))return res.status(400).json({error:'Estado inválido'});
+  const id=Number(req.params.id);
+  const rac=(await pool.query(`SELECT * FROM racs WHERE id=$1`,[id])).rows[0];
+  if(!rac)return res.status(404).json({error:'RAC no encontrado'});
+  if(!assertUnitAccess(req.user,rac.business_unit_id))return res.status(403).json({error:'RAC fuera de tu alcance'});
+
+  const target=upper(req.body.status);
+  const allowed=['PENDIENTE','EN PROCESO','PENDIENTE DE VALIDACION','DEVUELTO PARA CORRECCION','LEVANTADO'];
+  if(!allowed.includes(target))return res.status(400).json({error:'Estado inválido'});
   if(req.user.role==='SUPERVISOR'&&['DEVUELTO PARA CORRECCION','LEVANTADO'].includes(target))return res.status(403).json({error:'El levantamiento debe validarlo SSOMA o Máster'});
-  if(target==='PENDIENTE DE VALIDACION'&&!req.file)return res.status(400).json({error:'Adjunta evidencia final para solicitar validación'});
-  if(target==='LEVANTADO'&&!req.file&&(await pool.query(`SELECT 1 FROM rac_evidence WHERE rac_id=$1 AND evidence_type='FINAL' LIMIT 1`,[id])).rowCount===0)return res.status(400).json({error:'Se requiere evidencia final'});
-  const comment=clean(req.body.comment);let asset=null;
-  if(req.file){const saved=await saveUpload(req.file,`racs/${rac.report_code}`);asset=await queueAsset({entityType:'RAC',entityId:rac.id,businessUnitId:rac.business_unit_id,saved,uploadedBy:req.user.id});await pool.query(`INSERT INTO rac_evidence(rac_id,evidence_type,comment,original_name,stored_name,mime_type,size_bytes,drive_file_id,drive_web_link,drive_folder_path,drive_status,uploaded_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,[id,['PENDIENTE DE VALIDACION','LEVANTADO'].includes(target)?'FINAL':'SEGUIMIENTO',comment||null,saved.originalName,saved.storedName,saved.mimeType,saved.size,asset.drive.fileId||null,asset.drive.webViewLink||null,asset.drive.folderPath||null,asset.drive.status,req.user.id]);}
+
+  const comment=clean(req.body.comment);
+  const noEvidenceRequired=['true','1','on','si','sí'].includes(String(req.body.noEvidenceRequired||'').trim().toLowerCase());
+  const canValidate=Array.isArray(req.user.capabilities)&&req.user.capabilities.includes('rac:validate');
+  const hasFinalEvidence=(await pool.query(`SELECT 1 FROM rac_evidence WHERE rac_id=$1 AND evidence_type='FINAL' LIMIT 1`,[id])).rowCount>0;
+
+  if(noEvidenceRequired&&(!canValidate||target!=='LEVANTADO'))return res.status(403).json({error:'Solo SSOMA o Máster puede aprobar un cierre que no requiere evidencia'});
+  if(noEvidenceRequired&&req.file)return res.status(400).json({error:'No marques “No requiere evidencia” si estás adjuntando un archivo'});
+  if(noEvidenceRequired&&comment.length<10)return res.status(400).json({error:'Explica en el comentario por qué este RAC no requiere evidencia'});
+  if(target==='PENDIENTE DE VALIDACION'&&!req.file&&!hasFinalEvidence)return res.status(400).json({error:'Adjunta evidencia final para solicitar validación'});
+  if(target==='LEVANTADO'&&!req.file&&!hasFinalEvidence&&!noEvidenceRequired)return res.status(400).json({error:'Adjunta evidencia final o marca “No requiere evidencia” y registra la justificación'});
+
+  let asset=null;
+  if(req.file){
+    const saved=await saveUpload(req.file,`racs/${rac.report_code}`);
+    asset=await queueAsset({entityType:'RAC',entityId:rac.id,businessUnitId:rac.business_unit_id,saved,uploadedBy:req.user.id});
+    await pool.query(`INSERT INTO rac_evidence(rac_id,evidence_type,comment,original_name,stored_name,mime_type,size_bytes,drive_file_id,drive_web_link,drive_folder_path,drive_status,uploaded_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,[id,['PENDIENTE DE VALIDACION','LEVANTADO'].includes(target)?'FINAL':'SEGUIMIENTO',comment||null,saved.originalName,saved.storedName,saved.mimeType,saved.size,asset.drive.fileId||null,asset.drive.webViewLink||null,asset.drive.folderPath||null,asset.drive.status,req.user.id]);
+  }
+
   const progress=target==='LEVANTADO'?100:target==='PENDIENTE'?0:target==='EN PROCESO'?50:90;
   await pool.query(`
     WITH input AS (
-      SELECT $1::varchar AS target_status,$2::int AS target_progress,$3::int AS actor_id,$4::text AS note,$5::int AS rac_id
+      SELECT $1::varchar AS target_status,$2::int AS target_progress,$3::int AS actor_id,$4::text AS note,$5::int AS rac_id,$6::boolean AS no_evidence_required
     )
     UPDATE racs r SET
       status=input.target_status,
@@ -407,13 +429,22 @@ racsRouter.post('/:id/status',requireCapability('rac:followup'),upload.single('e
       lifted_at=CASE WHEN input.target_status='LEVANTADO'::varchar THEN CURRENT_DATE ELSE NULL END,
       close_comment=CASE WHEN input.target_status='LEVANTADO'::varchar THEN input.note ELSE r.close_comment END,
       validation_comment=CASE WHEN input.target_status='DEVUELTO PARA CORRECCION'::varchar THEN input.note ELSE r.validation_comment END,
+      evidence_required=CASE WHEN input.target_status='LEVANTADO'::varchar THEN NOT input.no_evidence_required ELSE TRUE END,
+      evidence_exemption_reason=CASE WHEN input.target_status='LEVANTADO'::varchar AND input.no_evidence_required THEN input.note ELSE NULL END,
+      evidence_exempted_at=CASE WHEN input.target_status='LEVANTADO'::varchar AND input.no_evidence_required THEN NOW() ELSE NULL END,
+      evidence_exempted_by=CASE WHEN input.target_status='LEVANTADO'::varchar AND input.no_evidence_required THEN input.actor_id ELSE NULL END,
       updated_at=NOW()
     FROM input
     WHERE r.id=input.rac_id
-  `,[target,progress,req.user.id,comment||null,id]);
-  if(target==='PENDIENTE DE VALIDACION'){const reviewers=(await pool.query(`SELECT DISTINCT u.id FROM users u LEFT JOIN user_business_units ubu ON ubu.user_id=u.id WHERE u.active=TRUE AND u.deleted_at IS NULL AND (u.role='MASTER' OR (u.role='SSOMA' AND ubu.business_unit_id=$1))`,[rac.business_unit_id])).rows;for(const reviewer of reviewers)await notify(reviewer.id,'Levantamiento por validar',`${rac.report_code} tiene evidencia final`,'WARN','RAC',id);}
+  `,[target,progress,req.user.id,comment||null,id,noEvidenceRequired]);
+
+  if(target==='PENDIENTE DE VALIDACION'){
+    const reviewers=(await pool.query(`SELECT DISTINCT u.id FROM users u LEFT JOIN user_business_units ubu ON ubu.user_id=u.id WHERE u.active=TRUE AND u.deleted_at IS NULL AND (u.role='MASTER' OR (u.role='SSOMA' AND ubu.business_unit_id=$1))`,[rac.business_unit_id])).rows;
+    for(const reviewer of reviewers)await notify(reviewer.id,'Levantamiento por validar',`${rac.report_code} tiene evidencia final`,'WARN','RAC',id);
+  }
   if(target==='DEVUELTO PARA CORRECCION'&&rac.supervisor_user_id)await notify(rac.supervisor_user_id,'Levantamiento devuelto',`${rac.report_code}: ${comment||'Requiere corrección'}`,'ERROR','RAC',id);
-  await audit(req,'UPDATE_RAC_STATUS','RAC',id,{from:rac.status,to:target,comment});res.json({ok:true,drive:asset?.drive||null});
+  await audit(req,'UPDATE_RAC_STATUS','RAC',id,{from:rac.status,to:target,comment,noEvidenceRequired,evidenceSupport:noEvidenceRequired?'NO_REQUIERE':(req.file||hasFinalEvidence?'EVIDENCIA':'SIN_SUSTENTO')});
+  res.json({ok:true,drive:asset?.drive||null,evidenceSupport:noEvidenceRequired?'NO_REQUIERE':'EVIDENCIA'});
 });
 
 racsRouter.post('/purge/preview',requireCapability('rac:purge'),async(req,res)=>{
