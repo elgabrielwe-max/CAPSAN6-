@@ -29,8 +29,15 @@ async function unitId(client,nameOrId){
 adminRouter.get('/units',requireCapability('masterdata:manage'),async(_req,res)=>res.json((await pool.query(`SELECT bu.*,COUNT(DISTINCT w.id)::int workers,COUNT(DISTINCT ubu.user_id)::int users FROM business_units bu LEFT JOIN workers w ON w.business_unit_id=bu.id AND w.active=TRUE LEFT JOIN user_business_units ubu ON ubu.business_unit_id=bu.id GROUP BY bu.id ORDER BY bu.name`)).rows));
 adminRouter.post('/units',requireCapability('masterdata:manage'),async(req,res)=>{
   const name=upper(req.body.name);if(!name)return res.status(400).json({error:'Nombre requerido'});
-  const result=await pool.query(`INSERT INTO business_units(name,code) VALUES($1,$2) ON CONFLICT(name) DO UPDATE SET code=EXCLUDED.code,active=TRUE RETURNING *`,[name,upper(req.body.code)||null]);
-  await audit(req,'UPSERT_UNIT','BUSINESS_UNIT',result.rows[0].id);res.json(result.rows[0]);
+  const result=await tx(async client=>{
+    const row=(await client.query(`INSERT INTO business_units(name,code) VALUES($1,$2) ON CONFLICT(name) DO UPDATE SET code=EXCLUDED.code,active=TRUE RETURNING *`,[name,upper(req.body.code)||null])).rows[0];
+    const propagated=(await client.query(`INSERT INTO user_business_units(user_id,business_unit_id)
+      SELECT u.id,$1 FROM users u
+      WHERE u.all_units_access=TRUE AND u.active=TRUE AND u.deleted_at IS NULL
+      ON CONFLICT DO NOTHING RETURNING user_id`,[row.id])).rowCount;
+    return{...row,propagatedUsers:propagated};
+  });
+  await audit(req,'UPSERT_UNIT','BUSINESS_UNIT',result.id,{propagatedUsers:result.propagatedUsers});res.json(result);
 });
 adminRouter.get('/areas',requireCapability('masterdata:manage'),async(_req,res)=>res.json((await pool.query(`SELECT a.*,array_remove(array_agg(bua.business_unit_id),NULL) unit_ids,COUNT(DISTINCT w.id)::int workers FROM areas a LEFT JOIN business_unit_areas bua ON bua.area_id=a.id LEFT JOIN workers w ON w.area_id=a.id AND w.active=TRUE GROUP BY a.id ORDER BY a.name`)).rows));
 adminRouter.post('/areas',requireCapability('masterdata:manage'),async(req,res)=>{
@@ -46,28 +53,30 @@ adminRouter.post('/areas',requireCapability('masterdata:manage'),async(req,res)=
 });
 
 adminRouter.get('/users',requireCapability('users:manage'),async(_req,res)=>{
-  const rows=(await pool.query(`SELECT u.id,u.name,u.email,u.username,u.role,u.active,u.must_change_password,u.created_at,array_remove(array_agg(ubu.business_unit_id),NULL) unit_ids,array_remove(array_agg(bu.name),NULL) units FROM users u LEFT JOIN user_business_units ubu ON ubu.user_id=u.id LEFT JOIN business_units bu ON bu.id=ubu.business_unit_id WHERE u.deleted_at IS NULL GROUP BY u.id ORDER BY u.name`)).rows;
+  const rows=(await pool.query(`SELECT u.id,u.name,u.email,u.username,u.role,u.active,u.must_change_password,u.all_units_access,u.created_at,array_remove(array_agg(ubu.business_unit_id),NULL) unit_ids,array_remove(array_agg(bu.name),NULL) units FROM users u LEFT JOIN user_business_units ubu ON ubu.user_id=u.id LEFT JOIN business_units bu ON bu.id=ubu.business_unit_id WHERE u.deleted_at IS NULL GROUP BY u.id ORDER BY u.name`)).rows;
   res.json(rows);
 });
 adminRouter.post('/users',requireCapability('users:manage'),async(req,res)=>{
-  const {id}=req.body;const name=upper(req.body.name),username=clean(req.body.username),role=upper(req.body.role),unitIds=(req.body.unitIds||[]).map(Number).filter(Boolean);
+  const {id}=req.body;const name=upper(req.body.name),username=clean(req.body.username),role=upper(req.body.role);let unitIds=(req.body.unitIds||[]).map(Number).filter(Boolean);
+  const allUnitsAccess=role!=='MASTER'&&['true','1','on','si','sí'].includes(String(req.body.allUnitsAccess||'').toLowerCase());
   if(!name||!username||!['MASTER','SSOMA','SUPERVISOR'].includes(role))return res.status(400).json({error:'Completa nombre, usuario y perfil'});
-  if(role!=='MASTER'&&!unitIds.length)return res.status(400).json({error:'Selecciona al menos una unidad de negocio'});
+  if(allUnitsAccess)unitIds=(await pool.query(`SELECT id FROM business_units WHERE active=TRUE ORDER BY id`)).rows.map(x=>Number(x.id));
+  if(role!=='MASTER'&&!unitIds.length)return res.status(400).json({error:'Selecciona al menos una unidad de negocio o activa el acceso automático'});
   const user=await tx(async client=>{
     let row;
     if(id){
-      row=(await client.query(`UPDATE users SET name=$1,username=$2,email=$3,role=$4,active=$5 WHERE id=$6 AND deleted_at IS NULL RETURNING *`,[name,username,clean(req.body.email)||`${username}@capsan6.local`,role,req.body.active!==false,Number(id)])).rows[0];
+      row=(await client.query(`UPDATE users SET name=$1,username=$2,email=$3,role=$4,active=$5,all_units_access=$7 WHERE id=$6 AND deleted_at IS NULL RETURNING *`,[name,username,clean(req.body.email)||`${username}@capsan6.local`,role,req.body.active!==false,Number(id),allUnitsAccess])).rows[0];
     }else{
       const password=String(req.body.password||'');if(!password)throw Object.assign(new Error('Contraseña temporal requerida'),{status:400});
       const hash=await bcrypt.hash(password,12);
-      row=(await client.query(`INSERT INTO users(name,email,username,password_hash,role,active,must_change_password) VALUES($1,$2,$3,$4,$5,TRUE,TRUE) RETURNING *`,[name,clean(req.body.email)||`${username}@capsan6.local`,username,hash,role])).rows[0];
+      row=(await client.query(`INSERT INTO users(name,email,username,password_hash,role,active,must_change_password,all_units_access) VALUES($1,$2,$3,$4,$5,TRUE,TRUE,$6) RETURNING *`,[name,clean(req.body.email)||`${username}@capsan6.local`,username,hash,role,allUnitsAccess])).rows[0];
     }
     if(!row)throw Object.assign(new Error('Usuario no encontrado'),{status:404});
     await client.query(`DELETE FROM user_business_units WHERE user_id=$1`,[row.id]);
     for(const unit of unitIds)await client.query(`INSERT INTO user_business_units(user_id,business_unit_id) VALUES($1,$2) ON CONFLICT DO NOTHING`,[row.id,unit]);
     return row;
   });
-  await audit(req,id?'UPDATE_USER':'CREATE_USER','USER',user.id,{role,unitIds});res.json({id:user.id});
+  await audit(req,id?'UPDATE_USER':'CREATE_USER','USER',user.id,{role,unitIds,allUnitsAccess});res.json({id:user.id});
 });
 adminRouter.post('/users/:id/reset-password',requireCapability('users:manage'),async(req,res)=>{
   const password=String(req.body.password||'');if(!password)return res.status(400).json({error:'Contraseña temporal requerida'});
@@ -145,7 +154,7 @@ adminRouter.post('/users/import',requireCapability('users:manage'),upload.single
       const username=clean(cell(row,['USUARIO','DNI','USERNAME']));const name=upper(cell(row,['NOMBRE','NOMBRES Y APELLIDOS','APELLIDOS Y NOMBRES','SUPERVISOR']));const role=upper(cell(row,['ROL','PERFIL','CARGO'])).includes('SSOMA')?'SSOMA':'SUPERVISOR';const unitName=upper(cell(row,['UNIDAD','UNIDAD DE NEGOCIO','PROYECTO','AREA']));
       if(!username||!name||!unitName){rejected++;continue;}const unit=await unitId(client,unitName);const existing=await client.query(`SELECT id FROM users WHERE username=$1 AND deleted_at IS NULL`,[username]);let userId;
       if(existing.rowCount){userId=existing.rows[0].id;await client.query(`UPDATE users SET name=$1,role=$2,active=TRUE WHERE id=$3`,[name,role,userId]);updated++;}
-      else{const temp=String(cell(row,['CLAVE','PASSWORD','CONTRASEÑA'])||username);const hash=await bcrypt.hash(temp,12);userId=(await client.query(`INSERT INTO users(name,email,username,password_hash,role,active,must_change_password) VALUES($1,$2,$3,$4,$5,TRUE,TRUE) RETURNING id`,[name,`${username}@capsan6.local`,username,hash,role])).rows[0].id;inserted++;}
+      else{const temp=String(cell(row,['CLAVE','PASSWORD','CONTRASEÑA'])||username);const hash=await bcrypt.hash(temp,12);userId=(await client.query(`INSERT INTO users(name,email,username,password_hash,role,active,must_change_password,all_units_access) VALUES($1,$2,$3,$4,$5,TRUE,TRUE,FALSE) RETURNING id`,[name,`${username}@capsan6.local`,username,hash,role])).rows[0].id;inserted++;}
       await client.query(`INSERT INTO user_business_units(user_id,business_unit_id) VALUES($1,$2) ON CONFLICT DO NOTHING`,[userId,unit.id]);
     }return{inserted,updated,rejected,total:rows.length};});
   await audit(req,'IMPORT_USERS','USER_IMPORT',req.file.originalname,summary);res.json(summary);

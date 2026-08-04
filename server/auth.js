@@ -29,10 +29,6 @@ export async function repairUserUnitLinks(user) {
       UNION
       SELECT business_unit_id FROM ssoma_evidence WHERE ssoma_user_id=$1 AND business_unit_id IS NOT NULL
       UNION
-      SELECT business_unit_id FROM dds_sessions WHERE presenter_user_id=$1 AND business_unit_id IS NOT NULL
-      UNION
-      SELECT business_unit_id FROM rit_sessions WHERE supervisor_user_id=$1 AND business_unit_id IS NOT NULL
-      UNION
       SELECT w.business_unit_id FROM grades g JOIN workers w ON w.id=g.worker_id
         WHERE g.entered_by=$1 AND w.business_unit_id IS NOT NULL
     )
@@ -45,9 +41,15 @@ export async function repairUserUnitLinks(user) {
 }
 
 export async function userUnits(userId, options = {}) {
+  const user=options.user||null;
+  if(user?.all_units_access&&user.role!=='MASTER'){
+    await pool.query(`INSERT INTO user_business_units(user_id,business_unit_id)
+      SELECT $1,bu.id FROM business_units bu WHERE bu.active IS TRUE
+      ON CONFLICT DO NOTHING`,[Number(userId)]);
+  }
   let result = await pool.query(`SELECT bu.id,bu.name,bu.code,bu.active FROM user_business_units ubu JOIN business_units bu ON bu.id=ubu.business_unit_id WHERE ubu.user_id=$1 ORDER BY bu.active DESC,bu.name`, [userId]);
-  if (!result.rowCount && options.repair && options.user && options.user.role !== 'MASTER') {
-    await repairUserUnitLinks(options.user);
+  if (!result.rowCount && options.repair && user && user.role !== 'MASTER') {
+    await repairUserUnitLinks(user);
     result = await pool.query(`SELECT bu.id,bu.name,bu.code,bu.active FROM user_business_units ubu JOIN business_units bu ON bu.id=ubu.business_unit_id WHERE ubu.user_id=$1 ORDER BY bu.active DESC,bu.name`, [userId]);
   }
   return result.rows;
@@ -56,7 +58,7 @@ export async function userUnits(userId, options = {}) {
 export function publicUser(user, units = []) {
   return {
     id: user.id, name: user.name, username: user.username, email: user.email, role: user.role,
-    mustChangePassword: Boolean(user.must_change_password), units,
+    mustChangePassword: Boolean(user.must_change_password), allUnitsAccess:Boolean(user.all_units_access), units,
     unitIds: units.map(unit => Number(unit.id)),
     scopeReady: user.role === 'MASTER' || units.length > 0,
     capabilities: CAPABILITIES[user.role] || [],

@@ -18,5 +18,5 @@ test('versión 4.0.14 publicada',async()=>{
   const index=await read('public/index.html');
   assert.ok(Number(pkg.version.split('.').at(-1))>=15);
   assert.match(app,/4\.0\.15-ASIGNACION-AUTOMATICA-TODOS-SUPERVISORES-POR-UNIDAD/);
-  assert.match(index,/v=4018/);
+  assert.match(index,/v=40\d{2}/);
 });

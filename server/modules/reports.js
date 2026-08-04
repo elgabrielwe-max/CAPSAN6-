@@ -5,6 +5,8 @@ import { pool } from '../db.js';
 import { buildRacExecutiveExcel, buildRacExecutivePpt } from '../reports/racExecutive.js';
 import { buildTrainingExcel } from '../reports/trainingExecutive.js';
 import { buildFlashReportExcel } from '../reports/flashReport.js';
+import { buildRacControlExcel } from '../reports/racControl.js';
+import { RAC_DEADLINE_RULES } from '../services/racDeadlines.js';
 import { audit } from '../services/audit.js';
 import { config } from '../config.js';
 import { reportPeriod } from '../services/reportDates.js';
@@ -61,6 +63,93 @@ async function label(query){
   let unit='';if(query.businessUnitId)unit=(await pool.query(`SELECT name FROM business_units WHERE id=$1`,[Number(query.businessUnitId)])).rows[0]?.name||'';
   return `Periodo: ${query.from||'inicio'} a ${query.to||'hoy'}${unit?` · Unidad: ${unit}`:''}`;
 }
+
+async function racControlData(query,user){
+  const unitIds=user.role==='MASTER'?null:user.units.map(x=>Number(x.id));
+  const values=[unitIds,query.businessUnitId?Number(query.businessUnitId):null,query.from||null,query.to||null];
+  const summary=(await pool.query(`
+    WITH scoped_units AS (
+      SELECT bu.id,bu.name FROM business_units bu
+      WHERE bu.active=TRUE
+        AND ($1::int[] IS NULL OR bu.id=ANY($1::int[]))
+        AND ($2::int IS NULL OR bu.id=$2::int)
+    ), worker_counts AS (
+      SELECT w.business_unit_id,COUNT(*)::int workers FROM workers w
+      JOIN scoped_units su ON su.id=w.business_unit_id
+      WHERE w.active=TRUE GROUP BY w.business_unit_id
+    ), rac_base AS (
+      SELECT r.*,
+        EXISTS(SELECT 1 FROM rac_evidence e WHERE e.rac_id=r.id AND e.evidence_type='FINAL') has_final_evidence
+      FROM racs r JOIN scoped_units su ON su.id=r.business_unit_id
+      WHERE ($3::date IS NULL OR r.report_date>=$3::date)
+        AND ($4::date IS NULL OR r.report_date<=$4::date)
+    ), rac_counts AS (
+      SELECT business_unit_id,
+        COUNT(*)::int total,
+        COUNT(*) FILTER(WHERE report_type='ACTO SUBESTANDAR')::int acts,
+        COUNT(*) FILTER(WHERE report_type='CONDICION SUBESTANDAR')::int conditions,
+        COUNT(*) FILTER(WHERE risk_level='ALTO')::int high,
+        COUNT(*) FILTER(WHERE risk_level='MEDIO')::int medium,
+        COUNT(*) FILTER(WHERE risk_level='BAJO')::int low,
+        COUNT(*) FILTER(WHERE status='PENDIENTE')::int pending,
+        COUNT(*) FILTER(WHERE status='EN PROCESO')::int in_process,
+        COUNT(*) FILTER(WHERE status='PENDIENTE DE VALIDACION')::int pending_validation,
+        COUNT(*) FILTER(WHERE status='DEVUELTO PARA CORRECCION')::int returned,
+        COUNT(*) FILTER(WHERE status='LEVANTADO')::int lifted,
+        COUNT(*) FILTER(WHERE status='LEVANTADO' AND has_final_evidence)::int lifted_with_evidence,
+        COUNT(*) FILTER(WHERE status='LEVANTADO' AND NOT has_final_evidence)::int lifted_without_evidence,
+        COUNT(*) FILTER(WHERE status<>'LEVANTADO' AND due_date<CURRENT_DATE)::int overdue,
+        COUNT(*) FILTER(WHERE status<>'LEVANTADO' AND due_date=CURRENT_DATE)::int due_today,
+        COUNT(*) FILTER(WHERE status<>'LEVANTADO' AND risk_level='ALTO' AND due_date<CURRENT_DATE)::int high_overdue
+      FROM rac_base GROUP BY business_unit_id
+    )
+    SELECT su.id unit_id,su.name unit,COALESCE(wc.workers,0)::int workers,
+      COALESCE(rc.total,0)::int total,COALESCE(rc.acts,0)::int acts,COALESCE(rc.conditions,0)::int conditions,
+      COALESCE(rc.high,0)::int high,COALESCE(rc.medium,0)::int medium,COALESCE(rc.low,0)::int low,
+      COALESCE(rc.pending,0)::int pending,COALESCE(rc.in_process,0)::int in_process,
+      COALESCE(rc.pending_validation,0)::int pending_validation,COALESCE(rc.returned,0)::int returned,
+      COALESCE(rc.lifted,0)::int lifted,COALESCE(rc.lifted_with_evidence,0)::int lifted_with_evidence,
+      COALESCE(rc.lifted_without_evidence,0)::int lifted_without_evidence,COALESCE(rc.overdue,0)::int overdue,
+      COALESCE(rc.due_today,0)::int due_today,COALESCE(rc.high_overdue,0)::int high_overdue
+    FROM scoped_units su LEFT JOIN worker_counts wc ON wc.business_unit_id=su.id
+    LEFT JOIN rac_counts rc ON rc.business_unit_id=su.id
+    ORDER BY rc.total DESC NULLS LAST,su.name
+  `,values)).rows;
+  const details=(await pool.query(`
+    WITH scoped_units AS (
+      SELECT bu.id FROM business_units bu WHERE bu.active=TRUE
+        AND ($1::int[] IS NULL OR bu.id=ANY($1::int[]))
+        AND ($2::int IS NULL OR bu.id=$2::int)
+    )
+    SELECT r.id,r.report_code,bu.name business_unit,r.report_date,r.due_date,r.risk_level,r.status,
+      COALESCE((SELECT string_agg(su.name, ', ' ORDER BY su.name) FROM rac_assignments ra JOIN users su ON su.id=ra.supervisor_user_id WHERE ra.rac_id=r.id AND ra.active=TRUE),u.name,r.supervisor_name_text,'SIN ASIGNAR') supervisor_name,
+      ar.name reporting_area,r.location,r.description,
+      EXISTS(SELECT 1 FROM rac_evidence e WHERE e.rac_id=r.id AND e.evidence_type='FINAL') has_final_evidence,
+      (r.status<>'LEVANTADO' AND r.due_date<CURRENT_DATE) is_overdue,
+      CASE WHEN r.status<>'LEVANTADO' AND r.due_date<CURRENT_DATE THEN CURRENT_DATE-r.due_date ELSE 0 END::int days_overdue
+    FROM racs r JOIN scoped_units scope ON scope.id=r.business_unit_id
+    JOIN business_units bu ON bu.id=r.business_unit_id
+    LEFT JOIN users u ON u.id=r.supervisor_user_id
+    LEFT JOIN areas ar ON ar.id=r.reporting_area_id
+    WHERE ($3::date IS NULL OR r.report_date>=$3::date)
+      AND ($4::date IS NULL OR r.report_date<=$4::date)
+    ORDER BY bu.name,r.due_date NULLS LAST,r.report_date,r.id
+  `,values)).rows;
+  return{summary,details,rules:RAC_DEADLINE_RULES};
+}
+
+reportsRouter.get('/racs/control-summary',asyncRoute(async(req,res)=>{
+  const data=await racControlData(req.query,req.user);
+  res.json({rows:data.summary,rules:data.rules});
+}));
+reportsRouter.get('/racs/control.xlsx',asyncRoute(async(req,res)=>{
+  const data=await racControlData(req.query,req.user);
+  const buffer=await buildRacControlExcel(data.summary,data.details,await label(req.query));
+  await audit(req,'DOWNLOAD_RAC_CONTROL_EXCEL','REPORT',null,{units:data.summary.length,rows:data.details.length});
+  res.setHeader('content-type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('content-disposition','attachment; filename="CAPSAN6_CONTROL_RACS_POR_UNIDAD.xlsx"');
+  res.send(Buffer.from(buffer));
+}));
 
 reportsRouter.get('/racs/executive.xlsx',asyncRoute(async(req,res)=>{
   const rows=await reportRows(req.query,req.user);const buffer=await buildRacExecutiveExcel(rows,await label(req.query),await workerCounts(req.user));

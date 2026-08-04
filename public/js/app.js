@@ -4,9 +4,9 @@ import { $,toast,errorBox,modal } from './ui.js';
 import { dashboardPage } from './pages/dashboard.js';
 import { trainingPlanPage,trainingGradesPage,trainingDashboardPage } from './pages/training.js';
 import { racDashboardPage,racOperationsPage } from './pages/racs.js';
-import { unitsAreasPage,usersPage,racPurgePage,workersPage } from './pages/admin.js';
+import { unitsAreasPage,usersPage,racPurgePage,workersPage } from './pages/admin.js?v=4020';
 import { environmentPage } from './pages/environment.js';
-import { ssomaPage,resourcesPage } from './pages/ssoma.js?v=4018';
+import { ssomaPage,resourcesPage } from './pages/ssoma.js?v=4020';
 import { incidentsPage } from './pages/incidents.js';
 
 const root=document.getElementById('root');

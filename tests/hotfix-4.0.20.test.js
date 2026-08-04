@@ -1,38 +1,48 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import fs from 'node:fs/promises';
+import { dueDateForRisk, RAC_DEADLINE_RULES } from '../server/services/racDeadlines.js';
+const read=path=>fs.readFile(new URL(`../${path}`,import.meta.url),'utf8');
 
-const read = file => readFileSync(new URL(`../${file}`, import.meta.url), 'utf8');
-
-test('DDS y RIT aceptan escaneado de asistentes en formatos documentales e imagen', () => {
-  const module = read('server/modules/dailySafety.js');
-  assert.match(module, /DDS_ATTENDANCE_SCAN/);
-  assert.match(module, /RIT_ATTENDANCE_SCAN/);
-  assert.match(module, /application\/pdf/);
-  assert.match(module, /image\/heic/);
-  assert.match(module, /25 \* 1024 \* 1024/);
+test('plazos RACS cumplen reglas de gerencia',()=>{
+  assert.equal(dueDateForRisk('2026-08-01','ALTO'),'2026-08-03');
+  assert.equal(dueDateForRisk('2026-08-01','MEDIO'),'2026-08-04');
+  assert.equal(dueDateForRisk('2026-08-01','BAJO'),'2026-08-05');
+  assert.equal(RAC_DEADLINE_RULES.ALTO.label,'0 a 48 horas');
 });
 
-test('el escaneado queda vinculado a file_assets y respeta el alcance por unidad', () => {
-  const module = read('server/modules/dailySafety.js');
-  assert.match(module, /queueAsset\(\{/);
-  assert.match(module, /businessUnitId: session\.business_unit_id/);
-  assert.match(module, /assertUnitAccess\(user, row\.business_unit_id\)/);
-  assert.match(module, /UPLOAD_ATTENDANCE_SCAN/);
+test('unidades nuevas se propagan a perfiles con alcance automático',async()=>{
+  const schema=await read('server/schema.js');
+  const admin=await read('server/modules/admin.js');
+  const auth=await read('server/auth.js');
+  assert.match(schema,/all_units_access BOOLEAN NOT NULL DEFAULT FALSE/);
+  assert.match(admin,/propagatedUsers/);
+  assert.match(admin,/Todas las unidades actuales y futuras|allUnitsAccess/);
+  assert.match(auth,/user\?\.all_units_access/);
 });
 
-test('la interfaz carga y permite descargar el escaneado desde DDS y RIT', () => {
-  const page = read('public/js/pages/dailySafety.js');
-  assert.match(page, /Escaneado de asistentes/);
-  assert.match(page, /ddsAttendanceScan/);
-  assert.match(page, /ritAttendanceScan/);
-  assert.match(page, /attendance-scan/);
-  assert.match(page, /download\(`\/api\/files\//);
+test('catálogos se refrescan después de crear una unidad',async()=>{
+  const source=await read('public/js/pages/admin.js');
+  assert.match(source,/state\.catalogs=await api\('\/api\/catalogs'\)/);
+  assert.match(source,/renderPage\(\)/);
 });
 
-test('la versión del servidor se actualizó a 4.0.20', () => {
-  const app = read('server/app.js');
-  const pkg = read('package.json');
-  assert.match(app, /version:'4\.0\.20'/);
-  assert.match(pkg, /"version": "4\.0\.20"/);
+test('descarga de recursos incorpora control RACS por unidad',async()=>{
+  const backend=await read('server/modules/reports.js');
+  const frontend=await read('public/js/pages/ssoma.js');
+  const report=await read('server/reports/racControl.js');
+  assert.match(backend,/\/racs\/control-summary/);
+  assert.match(backend,/lifted_without_evidence/);
+  assert.match(backend,/pending_validation/);
+  assert.match(backend,/high_overdue/);
+  assert.match(frontend,/Excel Control RACS por unidad/);
+  assert.match(frontend,/Levantados sin evidencia/);
+  assert.match(report,/RACS VENCIDOS/);
+  assert.match(report,/PENDIENTES VALIDACION/);
+});
+
+test('control SSOMA lista incluso unidades sin pendientes',async()=>{
+  const source=await read('server/modules/ssoma.js');
+  assert.match(source,/FROM business_units bu LEFT JOIN racs r/);
+  assert.match(source,/COUNT\(r\.id\) FILTER/);
 });

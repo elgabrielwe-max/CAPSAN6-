@@ -14,6 +14,7 @@ import { queueAsset } from '../services/drive.js';
 import { audit, notify } from '../services/audit.js';
 import { unitScope, parseFilters } from '../scope.js';
 import { config } from '../config.js';
+import { dueDateForRisk } from '../services/racDeadlines.js';
 
 const upload=multer({storage:multer.memoryStorage(),limits:{fileSize:25*1024*1024}});
 export const racsRouter=Router();
@@ -30,7 +31,6 @@ async function areaId(client,name,businessUnitId=null){
   return id;
 }
 async function unit(client,id){const r=await client.query(`SELECT * FROM business_units WHERE id=$1 AND active=TRUE`,[Number(id)]);return r.rows[0];}
-function dueDate(date,risk){const days=risk==='ALTO'?1:risk==='MEDIO'?3:7;const d=new Date(`${date}T12:00:00Z`);d.setUTCDate(d.getUTCDate()+days);return d.toISOString().slice(0,10);}
 function buildWhere(req,alias='r'){
   // La visibilidad se determina exclusivamente por las unidades vinculadas al perfil.
   // La asignación individual indica al responsable directo, pero no limita la lectura.
@@ -194,7 +194,7 @@ racsRouter.post('/',requireCapability('rac:create'),async(req,res)=>{
     const prefix=bu.code||'RAC';const sequence=Number((await client.query(`SELECT COUNT(*)::int total FROM racs WHERE business_unit_id=$1 AND report_date=$2`,[unitId,reportDate])).rows[0].total)+1;const code=`${prefix}-${reportDate.replaceAll('-','')}-${String(sequence).padStart(4,'0')}-${crypto.randomBytes(2).toString('hex').toUpperCase()}`;
     const result=await client.query(`INSERT INTO racs(report_code,source_report_number,business_unit_id,reporting_area_id,reported_area_id,reporter_name,reporter_type,location,report_date,risk_level,report_type,deviation_type,cause_category,cause_subtype,description,supervisor_user_id,supervisor_name_text,corrective_action,status,progress_percent,due_date,environmental_flag,environmental_category,environmental_confidence,created_by)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,'PENDIENTE',0,$19,$20,$21,$22,$23) RETURNING *`,[
-      code,clean(b.sourceReportNumber)||null,unitId,reporting,reported,upper(b.reporterName),upper(b.reporterType)||'COLABORADOR',upper(b.location)||null,reportDate,risk,reportType,selectedCause.subtype.name,selectedCause.category.name,selectedCause.subtype.name,description,primarySupervisor?.id||null,primarySupervisor?.name||null,upper(b.correctiveAction)||null,dueDate(reportDate,risk),Boolean(ai?.environmental||selectedCause.category.code==='VI'),selectedCause.category.code==='VI'?selectedCause.subtype.name:ai?.environmentalCategory||null,ai?.confidence||null,req.user.id]);
+      code,clean(b.sourceReportNumber)||null,unitId,reporting,reported,upper(b.reporterName),upper(b.reporterType)||'COLABORADOR',upper(b.location)||null,reportDate,risk,reportType,selectedCause.subtype.name,selectedCause.category.name,selectedCause.subtype.name,description,primarySupervisor?.id||null,primarySupervisor?.name||null,upper(b.correctiveAction)||null,dueDateForRisk(reportDate,risk),Boolean(ai?.environmental||selectedCause.category.code==='VI'),selectedCause.category.code==='VI'?selectedCause.subtype.name:ai?.environmentalCategory||null,ai?.confidence||null,req.user.id]);
     await client.query(`UPDATE racs SET cause_category_id=$1,cause_subtype_id=$2 WHERE id=$3`,[selectedCause.category.id,selectedCause.subtype.id,result.rows[0].id]);
     result.rows[0].cause_category_id=selectedCause.category.id;result.rows[0].cause_subtype_id=selectedCause.subtype.id;
     for(const supervisor of unitSupervisors)await client.query(`INSERT INTO rac_assignments(rac_id,supervisor_user_id,assigned_by,active) VALUES($1,$2,$3,TRUE) ON CONFLICT DO NOTHING`,[result.rows[0].id,supervisor.id,req.user.id]);
@@ -315,7 +315,7 @@ racsRouter.post('/import',requireCapability('rac:import'),upload.single('file'),
           r.sourceReportNumber,bu.id,reporting,reported,r.reporterName,r.reporterType,
           r.location,r.reportDate,r.riskLevel,canonicalRacReportType(r.reportType)||selectedCause.reportType,selectedCause.subtype.name,selectedCause.category.name,
           selectedCause.subtype.name,r.description,matchedSupervisor?.id||null,r.supervisorName||null,
-          r.correctiveAction||null,r.status,r.progressPercent,dueDate(r.reportDate,r.riskLevel),
+          r.correctiveAction||null,r.status,r.progressPercent,dueDateForRisk(r.reportDate,r.riskLevel),
           Boolean(r.environmentalFlag||selectedCause.category.code==='VI'),selectedCause.category.code==='VI'?selectedCause.subtype.name:r.environmentalCategory,r.environmentalConfidence,r.sourceFile,
           r.sourceSheet,r.sourceRow,batch.id,existing.id
         ])).rows[0].id;
@@ -339,7 +339,7 @@ racsRouter.post('/import',requireCapability('rac:import'),upload.single('file'),
           r.internalCode,r.sourceReportNumber,bu.id,reporting,reported,r.reporterName,r.reporterType,
           r.location,r.reportDate,r.riskLevel,canonicalRacReportType(r.reportType)||selectedCause.reportType,selectedCause.subtype.name,selectedCause.category.name,
           selectedCause.subtype.name,r.description,matchedSupervisor?.id||null,r.supervisorName||null,
-          r.correctiveAction||null,r.status,r.progressPercent,dueDate(r.reportDate,r.riskLevel),
+          r.correctiveAction||null,r.status,r.progressPercent,dueDateForRisk(r.reportDate,r.riskLevel),
           Boolean(r.environmentalFlag||selectedCause.category.code==='VI'),selectedCause.category.code==='VI'?selectedCause.subtype.name:r.environmentalCategory,r.environmentalConfidence,r.sourceFile,
           r.sourceSheet,r.sourceRow,batch.id,req.user.id
         ])).rows[0].id;

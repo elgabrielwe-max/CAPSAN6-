@@ -16,6 +16,7 @@ async function ensureColumns() {
     `ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT FALSE`,
     `ALTER TABLE users ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ`,
     `ALTER TABLE users ADD COLUMN IF NOT EXISTS deleted_by INTEGER`,
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS all_units_access BOOLEAN NOT NULL DEFAULT FALSE`,
     `ALTER TABLE workers ADD COLUMN IF NOT EXISTS business_unit_id INTEGER`,
     `ALTER TABLE workers ADD COLUMN IF NOT EXISTS full_name VARCHAR(220)`,
     `ALTER TABLE workers ADD COLUMN IF NOT EXISTS source_file TEXT`,
@@ -153,6 +154,7 @@ export async function initSchema() {
       must_change_password BOOLEAN NOT NULL DEFAULT FALSE,
       deleted_at TIMESTAMPTZ,
       deleted_by INTEGER,
+      all_units_access BOOLEAN NOT NULL DEFAULT FALSE,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
     CREATE TABLE IF NOT EXISTS user_business_units (
@@ -640,7 +642,36 @@ export async function initSchema() {
   await q(`INSERT INTO schema_migrations(version) VALUES('4.0.13') ON CONFLICT DO NOTHING`);
   await q(`INSERT INTO schema_migrations(version) VALUES('4.0.14') ON CONFLICT DO NOTHING`);
   await q(`INSERT INTO schema_migrations(version) VALUES('4.0.15') ON CONFLICT DO NOTHING`);
+  // 4.0.20 · Alcance automático de unidades y plazos institucionales RACS.
+  // Detecta perfiles que ya cubrían todas las unidades operativas existentes y los
+  // marca para recibir automáticamente las unidades creadas en el futuro.
+  await q(`
+    UPDATE users u SET all_units_access=TRUE
+    WHERE u.role IN ('SSOMA','SUPERVISOR')
+      AND u.active=TRUE AND u.deleted_at IS NULL
+      AND (SELECT COUNT(*) FROM user_business_units own WHERE own.user_id=u.id)>=2
+      AND NOT EXISTS (
+        SELECT 1 FROM business_units bu
+        WHERE bu.active=TRUE
+          AND EXISTS(SELECT 1 FROM user_business_units any_link WHERE any_link.business_unit_id=bu.id)
+          AND NOT EXISTS(SELECT 1 FROM user_business_units own_link WHERE own_link.user_id=u.id AND own_link.business_unit_id=bu.id)
+      )
+  `);
+  await q(`
+    INSERT INTO user_business_units(user_id,business_unit_id)
+    SELECT u.id,bu.id FROM users u CROSS JOIN business_units bu
+    WHERE u.all_units_access=TRUE AND u.active=TRUE AND u.deleted_at IS NULL AND bu.active=TRUE
+    ON CONFLICT DO NOTHING
+  `);
+  await q(`
+    UPDATE racs SET due_date=report_date+CASE UPPER(COALESCE(risk_level,''))
+      WHEN 'ALTO' THEN 2
+      WHEN 'MEDIO' THEN 3
+      ELSE 4 END
+    WHERE report_date IS NOT NULL
+  `);
   await q(`INSERT INTO schema_migrations(version) VALUES('4.0.19') ON CONFLICT DO NOTHING`);
+  await q(`INSERT INTO schema_migrations(version) VALUES('4.0.20') ON CONFLICT DO NOTHING`);
   await ensureMaster();
   await applyMasterRecovery();
 }

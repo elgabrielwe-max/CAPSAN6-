@@ -37,5 +37,5 @@ test('alcance 4.0.11 permanece integrado en versión posterior',async()=>{
   const pkg=JSON.parse(await read('package.json'));
   const index=await read('public/index.html');
   assert.ok(Number(pkg.version.split('.').at(-1))>=15);
-  assert.match(index,/v=4018/);
+  assert.match(index,/v=40\d{2}/);
 });

@@ -1,5 +1,17 @@
-# CAPSAN6 4.0.19 · Sistema Integral de Gestión SSOMA
+# CAPSAN6 4.0.20 · Sistema Integral de Gestión SSOMA
 
+
+
+## Mejora 4.0.20 · Unidades automáticas y control de plazos RACS
+
+- Agrega a los perfiles SSOMA/Supervisor la opción **Todas las unidades actuales y futuras**.
+- Las unidades nuevas se propagan automáticamente a los perfiles con ese alcance.
+- Al guardar una unidad se renuevan los catálogos del navegador sin cerrar sesión.
+- El Control SSOMA muestra todas las unidades accesibles, incluso si todavía tienen 0 RACS pendientes.
+- Aplica los plazos RACS definidos por gerencia: ALTO hasta 48 horas, MEDIO hasta 3 días y BAJO hasta 4 días.
+- Recalcula automáticamente los vencimientos históricos al desplegar la versión.
+- Incorpora en Descarga de recursos el **Control RACS por unidad**, con vista en pantalla y Excel.
+- El control incluye total, actos, condiciones, riesgo alto/medio/bajo, estados, pendientes de validación, levantados con/sin evidencia, vencidos y altos vencidos.
 
 ## Hotfix 4.0.19 · Depuración RACS y auditoría resistente
 
