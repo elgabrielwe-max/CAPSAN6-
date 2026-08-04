@@ -214,6 +214,50 @@ export async function initSchema() {
       UNIQUE(training_id, worker_id)
     );
 
+    CREATE TABLE IF NOT EXISTS rit_daily_records (
+      id BIGSERIAL PRIMARY KEY,
+      rit_date DATE NOT NULL DEFAULT CURRENT_DATE,
+      business_unit_id INTEGER NOT NULL REFERENCES business_units(id),
+      area_id INTEGER REFERENCES areas(id),
+      guard VARCHAR(80),
+      topic VARCHAR(280) NOT NULL,
+      facilitator_name VARCHAR(220) NOT NULL,
+      scheduled_count INTEGER NOT NULL DEFAULT 0 CHECK(scheduled_count>=0),
+      attendee_count INTEGER NOT NULL DEFAULT 0 CHECK(attendee_count>=0),
+      duration_minutes INTEGER NOT NULL DEFAULT 0 CHECK(duration_minutes>=0),
+      status VARCHAR(30) NOT NULL DEFAULT 'EJECUTADO',
+      observation TEXT,
+      created_by INTEGER REFERENCES users(id),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_rit_daily_scope ON rit_daily_records(business_unit_id,rit_date,status);
+
+    CREATE TABLE IF NOT EXISTS ids_performance (
+      id BIGSERIAL PRIMARY KEY,
+      period_start DATE NOT NULL,
+      period_end DATE NOT NULL,
+      business_unit_id INTEGER NOT NULL REFERENCES business_units(id),
+      worker_id INTEGER NOT NULL REFERENCES workers(id) ON DELETE CASCADE,
+      collaborators_count INTEGER NOT NULL DEFAULT 0 CHECK(collaborators_count>=0),
+      rac_programmed INTEGER NOT NULL DEFAULT 0 CHECK(rac_programmed>=0),
+      rac_executed INTEGER NOT NULL DEFAULT 0 CHECK(rac_executed>=0),
+      acts_count INTEGER NOT NULL DEFAULT 0 CHECK(acts_count>=0),
+      conditions_count INTEGER NOT NULL DEFAULT 0 CHECK(conditions_count>=0),
+      rit_cap_programmed INTEGER NOT NULL DEFAULT 0 CHECK(rit_cap_programmed>=0),
+      rit_cap_executed INTEGER NOT NULL DEFAULT 0 CHECK(rit_cap_executed>=0),
+      inspections_programmed INTEGER NOT NULL DEFAULT 0 CHECK(inspections_programmed>=0),
+      inspections_executed INTEGER NOT NULL DEFAULT 0 CHECK(inspections_executed>=0),
+      pare_programmed INTEGER NOT NULL DEFAULT 0 CHECK(pare_programmed>=0),
+      pare_executed INTEGER NOT NULL DEFAULT 0 CHECK(pare_executed>=0),
+      observation TEXT,
+      created_by INTEGER REFERENCES users(id),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE(worker_id,period_start,period_end)
+    );
+    CREATE INDEX IF NOT EXISTS idx_ids_scope ON ids_performance(business_unit_id,period_start,period_end);
+
     CREATE TABLE IF NOT EXISTS rac_cause_categories (
       id SERIAL PRIMARY KEY,
       code VARCHAR(10) UNIQUE NOT NULL,

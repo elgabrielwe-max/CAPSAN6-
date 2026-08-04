@@ -1,13 +1,15 @@
-CAPSAN6 4.0.17 - ACTUALIZACIÓN SOLO DE ARCHIVOS
+CAPSAN6 4.0.21 · PARCHE RIT DIARIO + IDS
 
-Este paquete contiene únicamente los archivos modificados para integrar el PPT Ejecutivo exclusivo de RACS.
+1. Extrae este ZIP.
+2. En la raíz del repositorio GitHub, usa Add file > Upload files.
+3. Arrastra TODO EL CONTENIDO INTERNO de esta carpeta, no la carpeta exterior.
+4. Acepta reemplazar los archivos existentes y confirma el commit.
+5. Espera el despliegue de Railway.
+6. Verifica en logs: CAPSAN6 4.0.21 ejecutándose en puerto 8080.
+7. Abre el sistema y presiona Ctrl + F5.
 
-No borres el proyecto existente. Reemplaza cada archivo respetando su carpeta:
-- package.json
-- server/app.js
-- server/modules/reports.js
-- server/reports/racExecutive.js
-- tests/hotfix-4.0.17.test.js
-- ACTUALIZACION_4_0_17_PPT_EJECUTIVO_RACS_ONLY.md
-
-Después haz commit en GitHub. Railway desplegará automáticamente si está conectado al repositorio.
+Resultado:
+- DDS ya no se usa como nombre.
+- Nuevo módulo independiente RIT Diario.
+- Módulo IDS independiente.
+- Excel separado para RIT Diario e IDS.

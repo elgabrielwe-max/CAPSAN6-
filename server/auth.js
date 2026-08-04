@@ -29,6 +29,10 @@ export async function repairUserUnitLinks(user) {
       UNION
       SELECT business_unit_id FROM ssoma_evidence WHERE ssoma_user_id=$1 AND business_unit_id IS NOT NULL
       UNION
+      SELECT business_unit_id FROM rit_daily_records WHERE created_by=$1 AND business_unit_id IS NOT NULL
+      UNION
+      SELECT business_unit_id FROM ids_performance WHERE created_by=$1 AND business_unit_id IS NOT NULL
+      UNION
       SELECT w.business_unit_id FROM grades g JOIN workers w ON w.id=g.worker_id
         WHERE g.entered_by=$1 AND w.business_unit_id IS NOT NULL
     )

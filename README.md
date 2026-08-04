@@ -1,8 +1,8 @@
-# CAPSAN6 4.0.20 · Sistema Integral de Gestión SSOMA
+# CAPSAN6 4.0.21 · Sistema Integral de Gestión SSOMA
 
 
 
-## Mejora 4.0.20 · Unidades automáticas y control de plazos RACS
+## Mejora 4.0.21 · Unidades automáticas y control de plazos RACS
 
 - Agrega a los perfiles SSOMA/Supervisor la opción **Todas las unidades actuales y futuras**.
 - Las unidades nuevas se propagan automáticamente a los perfiles con ese alcance.
@@ -199,3 +199,13 @@ La presentación empresarial usada como referencia visual no se incluye como arc
 
 ## 4.0.15 · Supervisores automáticos por unidad
 Al registrar un RAC, el sistema consulta la unidad seleccionada y asigna automáticamente a todos los usuarios activos con rol SUPERVISOR vinculados a esa unidad. La interfaz muestra previamente la lista de supervisores que recibirán el RAC.
+
+
+## RIT Diario e IDS · 4.0.21
+
+- El antiguo DDS vuelve como **RIT Diario** (Reunión de Inicio de Turno).
+- **IDS** se mantiene como módulo independiente de desempeño individual.
+- RIT Diario registra fecha, unidad, área, guardia, tema, facilitador, personal programado, asistentes, cumplimiento, estado, observación y evidencia.
+- IDS registra por trabajador y periodo: colaboradores a cargo, RAC programado/ejecutado, actos, condiciones, RIT-CAP, inspecciones, PARE, totales, cumplimiento y desempeño.
+- Desempeño IDS: 90% o más = BUENO; 75% a 89.9% = REGULAR; menos de 75% = DEFICIENTE.
+- Ambos módulos incluyen Excel descargable y filtros por unidad/periodo.
