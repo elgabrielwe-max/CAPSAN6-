@@ -15,6 +15,11 @@ const clean=v=>String(v||'').trim().replace(/\s+/g,' ');
 const upper=v=>clean(v).toUpperCase();
 const resultFor=(score,min)=>Number(score)>=Number(min||16)?'APROBADO':'DESAPROBADO';
 const isPdf=file=>file&&(file.mimetype==='application/pdf'||/\.pdf$/i.test(file.originalname||''));
+const isTrainingDocument=file=>{
+  if(!file)return false;
+  const mime=String(file.mimetype||'').toLowerCase(),name=String(file.originalname||'').toLowerCase();
+  return isPdf(file)||mime.startsWith('image/')||mime.includes('word')||mime.includes('excel')||mime.includes('spreadsheet')||/\.(docx?|xlsx?|png|jpe?g|webp)$/i.test(name);
+};
 
 async function getTraining(id){return (await pool.query(`SELECT * FROM trainings WHERE id=$1`,[Number(id)])).rows[0];}
 async function targetScope(trainingId,unitId){
@@ -31,8 +36,13 @@ async function assertTarget(trainingId,unitId,areaId){
 trainingsRouter.get('/',requireCapability('training:grade'),async(req,res)=>{
   const unitIds=req.user.role==='MASTER'?null:req.user.units.map(x=>Number(x.id));
   const rows=(await pool.query(`SELECT t.*,COALESCE(json_agg(DISTINCT jsonb_build_object('id',tt.id,'businessUnitId',tt.business_unit_id,'businessUnit',bu.name,'areaId',tt.area_id,'area',a.name)) FILTER(WHERE tt.id IS NOT NULL),'[]') targets,
-    COUNT(DISTINCT g.worker_id)::int graded
-    FROM trainings t LEFT JOIN training_targets tt ON tt.training_id=t.id LEFT JOIN business_units bu ON bu.id=tt.business_unit_id LEFT JOIN areas a ON a.id=tt.area_id LEFT JOIN grades g ON g.training_id=t.id
+    COUNT(DISTINCT g.worker_id)::int graded,COUNT(DISTINCT taf.id)::int attendance_files
+    FROM trainings t
+    LEFT JOIN training_targets tt ON tt.training_id=t.id
+    LEFT JOIN business_units bu ON bu.id=tt.business_unit_id
+    LEFT JOIN areas a ON a.id=tt.area_id
+    LEFT JOIN grades g ON g.training_id=t.id
+    LEFT JOIN training_attendance_files taf ON taf.training_id=t.id AND ($1::int[] IS NULL OR taf.business_unit_id=ANY($1::int[]))
     WHERE ($1::int[] IS NULL OR tt.business_unit_id=ANY($1::int[])) GROUP BY t.id ORDER BY t.created_at DESC`,[unitIds])).rows;
   res.json(rows);
 });
@@ -71,8 +81,12 @@ trainingsRouter.get('/:id/attendance-files',requireCapability('training:grade'),
   if(!(await getTraining(trainingId)))return res.status(404).json({error:'Capacitación no encontrada'});
   if(!assertUnitAccess(req.user,unitId))return res.status(403).json({error:'Unidad fuera de tu alcance'});
   if(!(await assertTarget(trainingId,unitId,areaId)))return res.status(400).json({error:'El tema no está asignado a esa unidad/área'});
-  const rows=(await pool.query(`SELECT taf.id,taf.training_id,taf.business_unit_id,taf.area_id,taf.created_at,fa.id file_asset_id,fa.original_name,fa.mime_type,fa.size_bytes,fa.drive_status,fa.drive_web_link,u.name uploaded_by_name
-    FROM training_attendance_files taf JOIN file_assets fa ON fa.id=taf.file_asset_id LEFT JOIN users u ON u.id=taf.uploaded_by
+  const rows=(await pool.query(`SELECT taf.id,taf.training_id,taf.business_unit_id,taf.area_id,taf.created_at,fa.id file_asset_id,fa.original_name,fa.mime_type,fa.size_bytes,fa.drive_status,fa.drive_web_link,u.name uploaded_by_name,bu.name business_unit_name,a.name area_name
+    FROM training_attendance_files taf
+    JOIN file_assets fa ON fa.id=taf.file_asset_id
+    JOIN business_units bu ON bu.id=taf.business_unit_id
+    LEFT JOIN areas a ON a.id=taf.area_id
+    LEFT JOIN users u ON u.id=taf.uploaded_by
     WHERE taf.training_id=$1 AND taf.business_unit_id=$2 AND ($3::int IS NULL OR taf.area_id=$3::int)
     ORDER BY taf.created_at DESC`,[trainingId,unitId,areaId])).rows;
   res.json(rows);
@@ -83,7 +97,7 @@ trainingsRouter.post('/:id/attendance-files',requireCapability('training:grade')
   const training=await getTraining(trainingId);if(!training)return res.status(404).json({error:'Capacitación no encontrada'});
   if(!assertUnitAccess(req.user,unitId))return res.status(403).json({error:'Unidad fuera de tu alcance'});
   if(!(await assertTarget(trainingId,unitId,areaId)))return res.status(400).json({error:'El tema no está asignado a esa unidad/área'});
-  if(!isPdf(req.file))return res.status(400).json({error:'Adjunta la lista de asistentes en formato PDF'});
+  if(!isTrainingDocument(req.file))return res.status(400).json({error:'Adjunta la lista de asistentes en PDF, imagen, Word o Excel'});
   const saved=await saveUpload(req.file,`capacitaciones/${trainingId}/asistencia`);
   const queued=await queueAsset({entityType:'TRAINING_ATTENDANCE',entityId:trainingId,businessUnitId:unitId,saved,uploadedBy:req.user.id});
   const record=(await pool.query(`INSERT INTO training_attendance_files(training_id,business_unit_id,area_id,file_asset_id,uploaded_by) VALUES($1,$2,$3,$4,$5) RETURNING *`,[trainingId,unitId,areaId,queued.asset.id,req.user.id])).rows[0];

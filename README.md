@@ -237,3 +237,12 @@ Los cierres antiguos sin archivo y sin excepción permanecen como **Sin sustento
 - IDS registra por trabajador y periodo: colaboradores a cargo, RAC programado/ejecutado, actos, condiciones, RIT-CAP, inspecciones, PARE, totales, cumplimiento y desempeño.
 - Desempeño IDS: 90% o más = BUENO; 75% a 89.9% = REGULAR; menos de 75% = DEFICIENTE.
 - Ambos módulos incluyen Excel descargable y filtros por unidad/periodo.
+
+## Mejora 4.0.25 · Expediente documental de capacitación
+
+- Planificación de capacitación permite adjuntar la lista de asistentes o documento rellenado por unidad y área.
+- Admite PDF, imagen, Word y Excel de hasta 20 MB.
+- PDF e imágenes tienen vista previa autenticada; todos los archivos pueden descargarse.
+- Registro de notas conserva y muestra los mismos documentos en tarjetas compactas.
+- Temas y asignaciones deja de mostrar listas verticales extensas y utiliza tarjetas resumidas con ventanas de detalle.
+- Incluye buscador, filtro por estado, contador de documentos y acceso rápido a asignaciones.

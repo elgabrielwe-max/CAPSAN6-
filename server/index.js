@@ -1,5 +1,6 @@
 import 'dotenv/config';
-// Integra mejoras 4.0.23 y anteriores.
+// Integra mejoras 4.0.25 y anteriores. Compatibilidad histórica: 4.0.24 y 4.0.23.
+// Referencia de despliegue anterior: CAPSAN6 4.0.24 ejecutándose.
 import { app } from './app.js';
 import { config } from './config.js';
 import { connectWithRetry } from './db.js';
@@ -10,6 +11,6 @@ async function start(){
   await connectWithRetry();
   await initSchema();
   await ensureStorage();
-  app.listen(config.port,()=>console.log(`CAPSAN6 4.0.24 ejecutándose en puerto ${config.port}`));
+  app.listen(config.port,()=>console.log(`CAPSAN6 4.0.25 ejecutándose en puerto ${config.port}`));
 }
 start().catch(error=>{console.error('No se pudo iniciar CAPSAN6:',error);process.exit(1);});

@@ -2,7 +2,7 @@ import { api,session,setToken } from './api.js';
 import { state,can,escapeHtml } from './state.js';
 import { $,toast,errorBox,modal } from './ui.js';
 import { dashboardPage } from './pages/dashboard.js';
-import { trainingPlanPage,trainingGradesPage,trainingDashboardPage } from './pages/training.js';
+import { trainingPlanPage,trainingGradesPage,trainingDashboardPage } from './pages/training.js?v=4025';
 import { racDashboardPage,racOperationsPage } from './pages/racs.js';
 import { unitsAreasPage,usersPage,racPurgePage,workersPage } from './pages/admin.js?v=4022';
 import { environmentPage } from './pages/environment.js';
