@@ -29,6 +29,6 @@ test('4.0.24 constructor PPT de control usa modelo corporativo y láminas gerenc
 
 test('la funcionalidad 4.0.24 permanece incluida en la versión actual',()=>{
   assert.match(read('server/app.js'),/4\.0\.24-PPT-CONTROL-RACS-POR-UNIDAD/);
-  assert.match(read('server/index.js'),/CAPSAN6 4\.0\.26 ejecutándose/);
-  assert.match(read('package.json'),/"version": "4\.0\.26"/);
+  assert.match(read('server/index.js'),/CAPSAN6 4\.0\.27 ejecutándose/);
+  assert.match(read('package.json'),/"version": "4\.0\.27"/);
 });

@@ -257,3 +257,11 @@ Los cierres antiguos sin archivo y sin excepción permanecen como **Sin sustento
 - Máster y SSOMA pueden crear nuevos tipos de causa y nuevas subcausas desde el mismo flujo.
 - Los supervisores no ven el apartado de administración; reciben el direccionamiento en su listado operativo y mediante notificación cuando están asignados.
 - Todos los cambios quedan registrados en auditoría.
+
+
+## Hotfix 4.0.27 · Migración segura de Listado direccionado
+
+- Corrige el arranque sobre bases PostgreSQL existentes que todavía no tenían `racs.directed_area_id`.
+- Primero crea las columnas de direccionamiento y recién después crea `idx_racs_direction`.
+- Evita el ciclo de reinicios con error PostgreSQL `42703`.
+- No elimina ni reinicia RACS, usuarios, archivos o configuraciones existentes.

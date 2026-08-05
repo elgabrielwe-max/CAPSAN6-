@@ -347,7 +347,6 @@ export async function initSchema() {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
     CREATE INDEX IF NOT EXISTS idx_racs_filters ON racs(business_unit_id, report_date, status, risk_level);
-    CREATE INDEX IF NOT EXISTS idx_racs_direction ON racs(business_unit_id,directed_area_id,status);
     CREATE TABLE IF NOT EXISTS rac_assignments (
       id BIGSERIAL PRIMARY KEY,
       rac_id INTEGER NOT NULL REFERENCES racs(id) ON DELETE CASCADE,
@@ -540,6 +539,11 @@ export async function initSchema() {
   `);
 
   await ensureColumns();
+
+  // Los índices que dependen de columnas agregadas por migración deben crearse
+  // después de ensureColumns(). En bases existentes, CREATE TABLE IF NOT EXISTS
+  // no incorpora columnas nuevas y el índice fallaría durante el arranque.
+  await q(`CREATE INDEX IF NOT EXISTS idx_racs_direction ON racs(business_unit_id,directed_area_id,status)`);
 
   // Normaliza restricciones históricas sin borrar información.
   await q(`UPDATE users SET username=COALESCE(username, split_part(email,'@',1)) WHERE username IS NULL`);
@@ -742,6 +746,7 @@ export async function initSchema() {
   await q(`INSERT INTO schema_migrations(version) VALUES('4.0.19') ON CONFLICT DO NOTHING`);
   await q(`INSERT INTO schema_migrations(version) VALUES('4.0.20') ON CONFLICT DO NOTHING`);
   await q(`INSERT INTO schema_migrations(version) VALUES('4.0.26') ON CONFLICT DO NOTHING`);
+  await q(`INSERT INTO schema_migrations(version) VALUES('4.0.27') ON CONFLICT DO NOTHING`);
   await ensureMaster();
   await applyMasterRecovery();
 }
