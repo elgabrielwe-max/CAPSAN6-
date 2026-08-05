@@ -1,7 +1,14 @@
-# CAPSAN6 4.0.23 · Sistema Integral de Gestión SSOMA
+# CAPSAN6 4.0.24 · Sistema Integral de Gestión SSOMA
 
 
 
+
+## Mejora 4.0.24 · PPT Control RACS por unidad
+
+- Nuevo botón **PPT Control RACS por unidad** en Descarga de recursos.
+- Presentación dinámica con el modelo corporativo OPTIMUS / U.E.A. Candelaria Chanca.
+- Incluye resumen general, análisis de cierre y sustento, riesgos y vencimientos, ficha por unidad y detalles de vencidos, altos abiertos, levantados sin sustento y pendientes de validación.
+- Respeta los filtros de unidad y periodo usados en el control RACS.
 
 ## Mejora 4.0.23 · Falla en la programación de stock
 

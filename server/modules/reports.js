@@ -5,7 +5,7 @@ import { pool } from '../db.js';
 import { buildRacExecutiveExcel, buildRacExecutivePpt } from '../reports/racExecutive.js';
 import { buildTrainingExcel } from '../reports/trainingExecutive.js';
 import { buildFlashReportExcel } from '../reports/flashReport.js';
-import { buildRacControlExcel } from '../reports/racControl.js';
+import { buildRacControlExcel, buildRacControlPpt } from '../reports/racControl.js';
 import { RAC_DEADLINE_RULES } from '../services/racDeadlines.js';
 import { audit } from '../services/audit.js';
 import { config } from '../config.js';
@@ -151,6 +151,14 @@ reportsRouter.get('/racs/control.xlsx',asyncRoute(async(req,res)=>{
   await audit(req,'DOWNLOAD_RAC_CONTROL_EXCEL','REPORT',null,{units:data.summary.length,rows:data.details.length});
   res.setHeader('content-type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.setHeader('content-disposition','attachment; filename="CAPSAN6_CONTROL_RACS_POR_UNIDAD.xlsx"');
+  res.send(Buffer.from(buffer));
+}));
+reportsRouter.get('/racs/control.pptx',asyncRoute(async(req,res)=>{
+  const data=await racControlData(req.query,req.user);
+  const buffer=await buildRacControlPpt(data.summary,data.details,await label(req.query));
+  await audit(req,'DOWNLOAD_RAC_CONTROL_PPT','REPORT',null,{units:data.summary.length,rows:data.details.length,format:'CONTROL_RACS_POR_UNIDAD'});
+  res.setHeader('content-type','application/vnd.openxmlformats-officedocument.presentationml.presentation');
+  res.setHeader('content-disposition','attachment; filename="CAPSAN6_CONTROL_RACS_POR_UNIDAD.pptx"');
   res.send(Buffer.from(buffer));
 }));
 
