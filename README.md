@@ -1,6 +1,15 @@
-# CAPSAN6 4.0.22 · Sistema Integral de Gestión SSOMA
+# CAPSAN6 4.0.23 · Sistema Integral de Gestión SSOMA
 
 
+
+
+## Mejora 4.0.23 · Falla en la programación de stock
+
+- Se incorpora la categoría **IX. LOGÍSTICA, STOCK Y ABASTECIMIENTO** al catálogo central RACS.
+- Se agrega la causa normalizada **FALLA EN LA PROGRAMACIÓN DE STOCK**.
+- La opción queda disponible en registro manual, importación, clasificación asistida, filtros, Excel y PowerPoint.
+- La clasificación local reconoce expresiones como falta de stock, sin stock, desabastecimiento y quiebre de stock.
+- La migración se ejecuta automáticamente al iniciar el servidor y no modifica RACS históricos.
 
 ## Mejora 4.0.22 · Cierres RACS que no requieren evidencia
 
