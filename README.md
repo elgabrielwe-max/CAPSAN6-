@@ -246,3 +246,14 @@ Los cierres antiguos sin archivo y sin excepción permanecen como **Sin sustento
 - Registro de notas conserva y muestra los mismos documentos en tarjetas compactas.
 - Temas y asignaciones deja de mostrar listas verticales extensas y utiliza tarjetas resumidas con ventanas de detalle.
 - Incluye buscador, filtro por estado, contador de documentos y acceso rápido a asignaciones.
+
+
+## Mejora 4.0.26 · Listado direccionado y edición de RACS
+
+- Nuevo apartado **Listado direccionado**, visible únicamente para Máster y SSOMA.
+- Permite definir el área responsable y justificar por qué debe levantar la observación.
+- Conserva por separado el área reportada original y el área direccionada.
+- Permite corregir riesgo, tipo de reporte, tipo de causa, subcausa, descripción, lugar y acción propuesta.
+- Máster y SSOMA pueden crear nuevos tipos de causa y nuevas subcausas desde el mismo flujo.
+- Los supervisores no ven el apartado de administración; reciben el direccionamiento en su listado operativo y mediante notificación cuando están asignados.
+- Todos los cambios quedan registrados en auditoría.

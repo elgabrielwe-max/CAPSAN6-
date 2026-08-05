@@ -28,10 +28,10 @@ test('4.0.25 incorpora vista previa autenticada de archivos',()=>{
   assert.match(api,/startsWith\('image\/'\)/);
 });
 
-test('4.0.25 queda versionado y fuerza actualización visual',()=>{
-  assert.match(read('server/index.js'),/CAPSAN6 4\.0\.25 ejecutándose/);
+test('la funcionalidad 4.0.25 permanece incluida y usa el caché actual',()=>{
+  assert.match(read('server/index.js'),/CAPSAN6 4\.0\.26 ejecutándose/);
   assert.match(read('server/app.js'),/4\.0\.25-DOCUMENTOS-CAPACITACION-Y-VISTA-COMPACTA/);
-  assert.match(read('package.json'),/"version": "4\.0\.25"/);
-  assert.match(read('public/index.html'),/v=4025/);
-  assert.match(read('public/js/app.js'),/training\.js\?v=4025/);
+  assert.match(read('package.json'),/"version": "4\.0\.26"/);
+  assert.match(read('public/index.html'),/v=4026/);
+  assert.match(read('public/js/app.js'),/training\.js\?v=4026/);
 });

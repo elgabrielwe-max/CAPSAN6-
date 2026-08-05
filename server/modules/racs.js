@@ -8,7 +8,7 @@ import { authRequired, requireCapability, assertUnitAccess } from '../auth.js';
 import { pool, tx } from '../db.js';
 import { analyzeRacWorkbook } from '../imports/racWorkbook.js';
 import { classifyRac } from '../services/ai.js';
-import { fetchRacCauseCatalog, resolveRacCauseSelection, createRacCauseSubtype, canonicalRacReportType } from '../services/racCatalog.js';
+import { fetchRacCauseCatalog, resolveRacCauseSelection, createRacCauseSubtype, createRacCauseCategory, canonicalRacReportType } from '../services/racCatalog.js';
 import { saveUpload } from '../services/storage.js';
 import { queueAsset } from '../services/drive.js';
 import { audit, notify } from '../services/audit.js';
@@ -64,10 +64,10 @@ racsRouter.get('/dashboard',requireCapability('rac:view'),async(req,res)=>{
 
 racsRouter.get('/',requireCapability('rac:view'),async(req,res)=>{
   const {where,params}=buildWhere(req);const limit=Math.min(Number(req.query.limit||300),1000);
-  const rows=(await pool.query(`SELECT r.*,bu.name business_unit,ar.name reporting_area,ad.name reported_area,
+  const rows=(await pool.query(`SELECT r.*,bu.name business_unit,ar.name reporting_area,ad.name reported_area,da.name directed_area,director.name directed_by_name,
     COALESCE((SELECT string_agg(su.name, ', ' ORDER BY su.name) FROM rac_assignments sra JOIN users su ON su.id=sra.supervisor_user_id WHERE sra.rac_id=r.id AND sra.active=TRUE AND su.active=TRUE AND su.deleted_at IS NULL),u.name,r.supervisor_name_text,'SIN ASIGNAR') supervisor_name,
     (SELECT COUNT(*)::int FROM rac_evidence e WHERE e.rac_id=r.id) evidence_count
-    FROM racs r LEFT JOIN business_units bu ON bu.id=r.business_unit_id LEFT JOIN areas ar ON ar.id=r.reporting_area_id LEFT JOIN areas ad ON ad.id=r.reported_area_id LEFT JOIN users u ON u.id=r.supervisor_user_id WHERE ${where} ORDER BY r.report_date DESC,r.id DESC LIMIT ${limit}`,params)).rows;
+    FROM racs r LEFT JOIN business_units bu ON bu.id=r.business_unit_id LEFT JOIN areas ar ON ar.id=r.reporting_area_id LEFT JOIN areas ad ON ad.id=r.reported_area_id LEFT JOIN areas da ON da.id=r.directed_area_id LEFT JOIN users director ON director.id=r.directed_by LEFT JOIN users u ON u.id=r.supervisor_user_id WHERE ${where} ORDER BY r.report_date DESC,r.id DESC LIMIT ${limit}`,params)).rows;
   res.json(rows);
 });
 
@@ -98,21 +98,24 @@ racsRouter.get('/changes',requireCapability('rac:view'),async(req,res)=>{
       r.report_type,r.deviation_type,r.cause_category,r.cause_subtype,r.reporter_name,r.reporter_type,
       r.location,r.description,r.corrective_action,r.status,r.progress_percent,r.due_date,r.lifted_at,
       r.evidence_required,r.evidence_exemption_reason,r.evidence_exempted_at,r.evidence_exempted_by,
+      r.directed_area_id,r.direction_reason,r.directed_by,r.directed_at,
       r.created_at,r.updated_at,
-      bu.name business_unit,ar.name reporting_area,ad.name reported_area,
+      bu.name business_unit,ar.name reporting_area,ad.name reported_area,da.name directed_area,director.name directed_by_name,
       COALESCE((SELECT string_agg(su.name, ', ' ORDER BY su.name) FROM rac_assignments sra JOIN users su ON su.id=sra.supervisor_user_id WHERE sra.rac_id=r.id AND sra.active=TRUE AND su.active=TRUE AND su.deleted_at IS NULL),u.name,r.supervisor_name_text,'SIN ASIGNAR') supervisor_name,
       COALESCE((
         SELECT MAX(al.created_at)
         FROM audit_log al
         WHERE al.entity_type='RAC' AND al.entity_id=r.id::text
-          AND al.action IN ('CREATE_RAC','ASSIGN_RAC','UPDATE_RAC_STATUS')
+          AND al.action IN ('CREATE_RAC','ASSIGN_RAC','UPDATE_RAC_STATUS','DIRECT_RAC','EDIT_RAC')
       ),r.updated_at,r.created_at) last_change_at,
-      (SELECT COUNT(*)::int FROM audit_log al WHERE al.entity_type='RAC' AND al.entity_id=r.id::text AND al.action IN ('CREATE_RAC','ASSIGN_RAC','UPDATE_RAC_STATUS')) change_count,
+      (SELECT COUNT(*)::int FROM audit_log al WHERE al.entity_type='RAC' AND al.entity_id=r.id::text AND al.action IN ('CREATE_RAC','ASSIGN_RAC','UPDATE_RAC_STATUS','DIRECT_RAC','EDIT_RAC')) change_count,
       (SELECT COUNT(*)::int FROM rac_evidence e WHERE e.rac_id=r.id) evidence_count
     FROM racs r
     LEFT JOIN business_units bu ON bu.id=r.business_unit_id
     LEFT JOIN areas ar ON ar.id=r.reporting_area_id
     LEFT JOIN areas ad ON ad.id=r.reported_area_id
+    LEFT JOIN areas da ON da.id=r.directed_area_id
+    LEFT JOIN users director ON director.id=r.directed_by
     LEFT JOIN users u ON u.id=r.supervisor_user_id
     WHERE ${clauses.join(' AND ')}
     ORDER BY last_change_at DESC,r.id DESC
@@ -129,7 +132,7 @@ racsRouter.get('/changes',requireCapability('rac:view'),async(req,res)=>{
     LEFT JOIN users changer ON changer.id=al.user_id
     WHERE al.entity_type='RAC'
       AND al.entity_id=ANY($1::text[])
-      AND al.action IN ('CREATE_RAC','ASSIGN_RAC','UPDATE_RAC_STATUS')
+      AND al.action IN ('CREATE_RAC','ASSIGN_RAC','UPDATE_RAC_STATUS','DIRECT_RAC','EDIT_RAC')
     ORDER BY al.created_at DESC,al.id DESC
   `,[idTexts])).rows;
   const evidence=(await pool.query(`
@@ -181,6 +184,13 @@ racsRouter.post('/cause-subtypes',requireCapability('rac:catalog.manage'),async(
   const subtype=await tx(client=>createRacCauseSubtype(client,{categoryId:req.body.categoryId,name:req.body.name,createdBy:req.user.id}));
   await audit(req,'CREATE_RAC_CAUSE_SUBTYPE','RAC_CAUSE_SUBTYPE',subtype.id,{categoryId:subtype.categoryId,name:subtype.name});
   res.status(201).json(subtype);
+});
+
+
+racsRouter.post('/cause-categories',requireCapability('rac:catalog.manage'),async(req,res)=>{
+  const category=await tx(client=>createRacCauseCategory(client,{name:req.body.name,reportType:req.body.reportType,code:req.body.code,createdBy:req.user.id}));
+  await audit(req,'CREATE_RAC_CAUSE_CATEGORY','RAC_CAUSE_CATEGORY',category.id,{code:category.code,name:category.name,reportType:category.reportType});
+  res.status(201).json(category);
 });
 
 racsRouter.post('/',requireCapability('rac:create'),async(req,res)=>{
@@ -376,6 +386,75 @@ racsRouter.post('/import',requireCapability('rac:import'),upload.single('file'),
   await audit(req,'IMPORT_RACS','RAC_IMPORT',summary.batchId,summary);
   res.json(summary);
 }));
+
+
+racsRouter.get('/directed',requireCapability('rac:direct'),async(req,res)=>{
+  const {where,params}=buildWhere(req);
+  const clauses=[where];const values=[...params];
+  const directionStatus=upper(req.query.directionStatus||'ALL');
+  if(directionStatus==='DIRECTED')clauses.push('r.directed_area_id IS NOT NULL');
+  if(directionStatus==='NOT_DIRECTED')clauses.push('r.directed_area_id IS NULL');
+  if(req.query.directedAreaId){values.push(Number(req.query.directedAreaId));clauses.push(`r.directed_area_id=$${values.length}`);}
+  const search=clean(req.query.search);
+  if(search){values.push(`%${upper(search)}%`);const n=values.length;clauses.push(`(UPPER(COALESCE(r.report_code,'')) LIKE $${n} OR UPPER(COALESCE(r.description,'')) LIKE $${n} OR UPPER(COALESCE(r.location,'')) LIKE $${n} OR UPPER(COALESCE(r.cause_subtype,r.deviation_type,'')) LIKE $${n} OR UPPER(COALESCE(da.name,'')) LIKE $${n} OR UPPER(COALESCE(r.direction_reason,'')) LIKE $${n})`);}
+  const limit=Math.min(Math.max(Number(req.query.limit||500),1),1000);
+  const rows=(await pool.query(`
+    SELECT r.*,bu.name business_unit,ar.name reporting_area,ad.name reported_area,da.name directed_area,director.name directed_by_name,
+      COALESCE((SELECT string_agg(su.name, ', ' ORDER BY su.name) FROM rac_assignments sra JOIN users su ON su.id=sra.supervisor_user_id WHERE sra.rac_id=r.id AND sra.active=TRUE AND su.active=TRUE AND su.deleted_at IS NULL),u.name,r.supervisor_name_text,'SIN ASIGNAR') supervisor_name,
+      (SELECT COUNT(*)::int FROM rac_evidence e WHERE e.rac_id=r.id) evidence_count
+    FROM racs r
+    LEFT JOIN business_units bu ON bu.id=r.business_unit_id
+    LEFT JOIN areas ar ON ar.id=r.reporting_area_id
+    LEFT JOIN areas ad ON ad.id=r.reported_area_id
+    LEFT JOIN areas da ON da.id=r.directed_area_id
+    LEFT JOIN users director ON director.id=r.directed_by
+    LEFT JOIN users u ON u.id=r.supervisor_user_id
+    WHERE ${clauses.join(' AND ')}
+    ORDER BY (r.directed_area_id IS NULL) DESC,COALESCE(r.directed_at,r.updated_at,r.created_at) DESC,r.id DESC
+    LIMIT ${limit}
+  `,values)).rows;
+  res.json(rows);
+});
+
+racsRouter.patch('/:id/direction',requireCapability('rac:direct'),async(req,res)=>{
+  const id=Number(req.params.id);const b=req.body||{};
+  const rac=(await pool.query(`SELECT * FROM racs WHERE id=$1`,[id])).rows[0];
+  if(!rac)return res.status(404).json({error:'RAC no encontrado'});
+  if(!assertUnitAccess(req.user,rac.business_unit_id))return res.status(403).json({error:'RAC fuera de tu alcance'});
+  const directionReason=clean(b.directionReason);
+  if(directionReason.length<5)return res.status(400).json({error:'Indica por qué se direcciona el RAC al área seleccionada'});
+  const directedAreaId=Number(b.directedAreaId);const reportingAreaId=Number(b.reportingAreaId||rac.reporting_area_id);const reportedAreaId=Number(b.reportedAreaId||rac.reported_area_id);
+  if(!directedAreaId)return res.status(400).json({error:'Selecciona el área direccionada'});
+  const risk=upper(b.riskLevel||rac.risk_level);if(!['ALTO','MEDIO','BAJO'].includes(risk))return res.status(400).json({error:'Nivel de riesgo inválido'});
+  const description=upper(b.description||rac.description);if(!description)return res.status(400).json({error:'La descripción del RAC es obligatoria'});
+  const updated=await tx(async client=>{
+    const areaIds=[reportingAreaId,reportedAreaId,directedAreaId].filter(Boolean);
+    const areas=(await client.query(`SELECT id,name FROM areas WHERE id=ANY($1::int[]) AND active=TRUE`,[areaIds])).rows;
+    if(new Set(areas.map(row=>Number(row.id))).size!==new Set(areaIds).size)throw Object.assign(new Error('Una de las áreas seleccionadas no existe o está inactiva'),{status:400});
+    for(const areaIdValue of areaIds)await client.query(`INSERT INTO business_unit_areas(business_unit_id,area_id) VALUES($1,$2) ON CONFLICT DO NOTHING`,[rac.business_unit_id,areaIdValue]);
+    const selectedCause=await resolveRacCauseSelection(client,{categoryId:b.causeCategoryId||rac.cause_category_id,subtypeId:b.causeSubtypeId||rac.cause_subtype_id,reportType:b.reportType||rac.report_type,fallbackText:description});
+    const reportType=canonicalRacReportType(selectedCause.category.reportType)||selectedCause.reportType||'CONDICION SUBESTANDAR';
+    const result=(await client.query(`UPDATE racs SET
+      reporting_area_id=$1,reported_area_id=$2,directed_area_id=$3,direction_reason=$4,directed_by=$5,directed_at=NOW(),
+      risk_level=$6,due_date=$7,report_type=$8,deviation_type=$9,cause_category_id=$10,cause_subtype_id=$11,cause_category=$12,cause_subtype=$13,
+      description=$14,location=$15,corrective_action=$16,updated_at=NOW()
+      WHERE id=$17 RETURNING *`,[
+      reportingAreaId,reportedAreaId,directedAreaId,directionReason,req.user.id,risk,dueDateForRisk(rac.report_date,risk),reportType,selectedCause.subtype.name,
+      selectedCause.category.id,selectedCause.subtype.id,selectedCause.category.name,selectedCause.subtype.name,description,upper(b.location||rac.location)||null,upper(b.correctiveAction||rac.corrective_action)||null,id
+    ])).rows[0];
+    const directedArea=areas.find(row=>Number(row.id)===directedAreaId);
+    return{...result,directed_area:directedArea?.name||''};
+  });
+  const details={
+    directedAreaId, directedArea:updated.directed_area, directionReason,
+    previous:{reportingAreaId:rac.reporting_area_id,reportedAreaId:rac.reported_area_id,directedAreaId:rac.directed_area_id,riskLevel:rac.risk_level,reportType:rac.report_type,causeCategory:rac.cause_category,causeSubtype:rac.cause_subtype,description:rac.description},
+    current:{reportingAreaId,reportedAreaId,directedAreaId,riskLevel:updated.risk_level,reportType:updated.report_type,causeCategory:updated.cause_category,causeSubtype:updated.cause_subtype,description:updated.description}
+  };
+  await audit(req,rac.directed_area_id?'EDIT_RAC':'DIRECT_RAC','RAC',id,details);
+  const assigned=(await pool.query(`SELECT DISTINCT supervisor_user_id id FROM rac_assignments WHERE rac_id=$1 AND active=TRUE`,[id])).rows;
+  for(const recipient of assigned)if(Number(recipient.id)!==Number(req.user.id))await notify(recipient.id,'RAC direccionado',`${rac.report_code} fue direccionado a ${updated.directed_area}: ${directionReason}`,'WARN','RAC',id);
+  res.json({...updated,direction_reason:directionReason});
+});
 
 racsRouter.post('/:id/assign',requireCapability('rac:assign'),async(req,res)=>{
   const racId=Number(req.params.id),supervisorId=Number(req.body.supervisorUserId);const rac=(await pool.query(`SELECT business_unit_id,report_code FROM racs WHERE id=$1`,[racId])).rows[0];if(!rac)return res.status(404).json({error:'RAC no encontrado'});if(!assertUnitAccess(req.user,rac.business_unit_id))return res.status(403).json({error:'Unidad fuera de tu alcance'});

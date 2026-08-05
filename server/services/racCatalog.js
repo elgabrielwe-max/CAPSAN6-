@@ -8,9 +8,9 @@ export function canonicalRacReportType(value) {
 }
 
 export async function fetchRacCauseCatalog(client) {
-  const categories=(await client.query(`SELECT id,code,name,report_type,sort_order FROM rac_cause_categories WHERE active=TRUE ORDER BY sort_order,code`)).rows;
+  const categories=(await client.query(`SELECT id,code,name,report_type,is_custom,sort_order FROM rac_cause_categories WHERE active=TRUE ORDER BY sort_order,code`)).rows;
   const subtypes=(await client.query(`SELECT id,category_id,name,is_custom,sort_order FROM rac_cause_subtypes WHERE active=TRUE ORDER BY category_id,sort_order,name`)).rows;
-  return categories.map(category=>({id:category.id,code:category.code,name:category.name,reportType:canonicalRacReportType(category.report_type)||category.report_type,sortOrder:category.sort_order,subtypes:subtypes.filter(subtype=>Number(subtype.category_id)===Number(category.id)).map(subtype=>({id:subtype.id,name:subtype.name,isCustom:subtype.is_custom,sortOrder:subtype.sort_order}))}));
+  return categories.map(category=>({id:category.id,code:category.code,name:category.name,reportType:canonicalRacReportType(category.report_type)||category.report_type,isCustom:Boolean(category.is_custom),sortOrder:category.sort_order,subtypes:subtypes.filter(subtype=>Number(subtype.category_id)===Number(category.id)).map(subtype=>({id:subtype.id,name:subtype.name,isCustom:subtype.is_custom,sortOrder:subtype.sort_order}))}));
 }
 
 function findSubtype(catalog, value, preferredCategory=null) {
@@ -73,4 +73,28 @@ export async function createRacCauseSubtype(client,{categoryId,name,createdBy}) 
   const normalized=normalizeCauseText(clean);const category=(await client.query(`SELECT id,code,name,report_type FROM rac_cause_categories WHERE id=$1 AND active=TRUE`,[Number(categoryId)])).rows[0];if(!category)throw Object.assign(new Error('Tipo de causa no encontrado'),{status:404});
   const row=(await client.query(`INSERT INTO rac_cause_subtypes(category_id,name,normalized_name,is_custom,active,created_by,sort_order) VALUES($1,$2,$3,TRUE,TRUE,$4,COALESCE((SELECT MAX(sort_order)+1 FROM rac_cause_subtypes WHERE category_id=$1),1)) ON CONFLICT(category_id,normalized_name) DO UPDATE SET active=TRUE,updated_at=NOW() RETURNING id,category_id,name,is_custom,sort_order`,[category.id,clean,normalized,createdBy])).rows[0];
   return{id:row.id,categoryId:row.category_id,name:row.name,isCustom:row.is_custom,sortOrder:row.sort_order,category:{id:category.id,code:category.code,name:category.name,reportType:canonicalRacReportType(category.report_type)||category.report_type}};
+}
+
+
+function toRoman(value) {
+  let number=Math.max(1,Number(value)||1);
+  const pairs=[[1000,'M'],[900,'CM'],[500,'D'],[400,'CD'],[100,'C'],[90,'XC'],[50,'L'],[40,'XL'],[10,'X'],[9,'IX'],[5,'V'],[4,'IV'],[1,'I']];
+  let result='';
+  for(const [amount,symbol] of pairs){while(number>=amount){result+=symbol;number-=amount;}}
+  return result;
+}
+
+export async function createRacCauseCategory(client,{name,reportType,code,createdBy}) {
+  const clean=String(name||'').trim().replace(/\s+/g,' ').toUpperCase();
+  if(clean.length<4||clean.length>180)throw Object.assign(new Error('El nuevo tipo de causa debe tener entre 4 y 180 caracteres'),{status:400});
+  const canonical=canonicalRacReportType(reportType);
+  if(!canonical)throw Object.assign(new Error('Selecciona si corresponde a acto o condición subestándar'),{status:400});
+  const nextOrder=Number((await client.query(`SELECT COALESCE(MAX(sort_order),0)+1 next_order FROM rac_cause_categories`)).rows[0].next_order||1);
+  const requestedCode=String(code||'').trim().toUpperCase().replace(/[^A-Z0-9_-]/g,'');
+  const categoryCode=requestedCode||toRoman(nextOrder);
+  if(categoryCode.length>10)throw Object.assign(new Error('El código del tipo de causa no puede superar 10 caracteres'),{status:400});
+  const duplicate=(await client.query(`SELECT id,code,name FROM rac_cause_categories WHERE UPPER(name)=UPPER($1) OR UPPER(code)=UPPER($2) LIMIT 1`,[clean,categoryCode])).rows[0];
+  if(duplicate)throw Object.assign(new Error(`Ya existe el tipo de causa ${duplicate.code}. ${duplicate.name}`),{status:409});
+  const row=(await client.query(`INSERT INTO rac_cause_categories(code,name,report_type,is_custom,active,sort_order,created_by) VALUES($1,$2,$3,TRUE,TRUE,$4,$5) RETURNING id,code,name,report_type,is_custom,sort_order`,[categoryCode,clean,canonical,nextOrder,createdBy])).rows[0];
+  return{id:row.id,code:row.code,name:row.name,reportType:canonicalRacReportType(row.report_type)||row.report_type,isCustom:row.is_custom,sortOrder:row.sort_order,subtypes:[]};
 }

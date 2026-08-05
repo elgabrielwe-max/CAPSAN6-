@@ -53,6 +53,11 @@ async function ensureColumns() {
     `ALTER TABLE racs ADD COLUMN IF NOT EXISTS evidence_exemption_reason TEXT`,
     `ALTER TABLE racs ADD COLUMN IF NOT EXISTS evidence_exempted_at TIMESTAMPTZ`,
     `ALTER TABLE racs ADD COLUMN IF NOT EXISTS evidence_exempted_by INTEGER`,
+    `ALTER TABLE racs ADD COLUMN IF NOT EXISTS directed_area_id INTEGER`,
+    `ALTER TABLE racs ADD COLUMN IF NOT EXISTS direction_reason TEXT`,
+    `ALTER TABLE racs ADD COLUMN IF NOT EXISTS directed_by INTEGER`,
+    `ALTER TABLE racs ADD COLUMN IF NOT EXISTS directed_at TIMESTAMPTZ`,
+    `ALTER TABLE rac_cause_categories ADD COLUMN IF NOT EXISTS is_custom BOOLEAN NOT NULL DEFAULT FALSE`,
     `ALTER TABLE rac_evidence ADD COLUMN IF NOT EXISTS evidence_type VARCHAR(30) NOT NULL DEFAULT 'SEGUIMIENTO'`,
     `ALTER TABLE rac_evidence ADD COLUMN IF NOT EXISTS comment TEXT`,
     `ALTER TABLE rac_evidence ADD COLUMN IF NOT EXISTS drive_file_id TEXT`,
@@ -268,6 +273,7 @@ export async function initSchema() {
       name VARCHAR(180) NOT NULL,
       report_type VARCHAR(50) NOT NULL,
       active BOOLEAN NOT NULL DEFAULT TRUE,
+      is_custom BOOLEAN NOT NULL DEFAULT FALSE,
       sort_order INTEGER NOT NULL DEFAULT 0,
       created_by INTEGER REFERENCES users(id),
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -296,6 +302,10 @@ export async function initSchema() {
       business_unit_id INTEGER REFERENCES business_units(id),
       reporting_area_id INTEGER REFERENCES areas(id),
       reported_area_id INTEGER REFERENCES areas(id),
+      directed_area_id INTEGER REFERENCES areas(id),
+      direction_reason TEXT,
+      directed_by INTEGER REFERENCES users(id),
+      directed_at TIMESTAMPTZ,
       reporter_name VARCHAR(180) NOT NULL,
       reporter_type VARCHAR(40) DEFAULT 'COLABORADOR',
       location VARCHAR(220),
@@ -337,6 +347,7 @@ export async function initSchema() {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
     CREATE INDEX IF NOT EXISTS idx_racs_filters ON racs(business_unit_id, report_date, status, risk_level);
+    CREATE INDEX IF NOT EXISTS idx_racs_direction ON racs(business_unit_id,directed_area_id,status);
     CREATE TABLE IF NOT EXISTS rac_assignments (
       id BIGSERIAL PRIMARY KEY,
       rac_id INTEGER NOT NULL REFERENCES racs(id) ON DELETE CASCADE,
@@ -582,6 +593,12 @@ export async function initSchema() {
     IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conname='racs_cause_subtype_fk') THEN
       ALTER TABLE racs ADD CONSTRAINT racs_cause_subtype_fk FOREIGN KEY(cause_subtype_id) REFERENCES rac_cause_subtypes(id) ON DELETE SET NULL;
     END IF;
+    IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conname='racs_directed_area_fk') THEN
+      ALTER TABLE racs ADD CONSTRAINT racs_directed_area_fk FOREIGN KEY(directed_area_id) REFERENCES areas(id) ON DELETE SET NULL;
+    END IF;
+    IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conname='racs_directed_by_fk') THEN
+      ALTER TABLE racs ADD CONSTRAINT racs_directed_by_fk FOREIGN KEY(directed_by) REFERENCES users(id) ON DELETE SET NULL;
+    END IF;
   END $$`);
 
   await q(`
@@ -724,6 +741,7 @@ export async function initSchema() {
   `);
   await q(`INSERT INTO schema_migrations(version) VALUES('4.0.19') ON CONFLICT DO NOTHING`);
   await q(`INSERT INTO schema_migrations(version) VALUES('4.0.20') ON CONFLICT DO NOTHING`);
+  await q(`INSERT INTO schema_migrations(version) VALUES('4.0.26') ON CONFLICT DO NOTHING`);
   await ensureMaster();
   await applyMasterRecovery();
 }
