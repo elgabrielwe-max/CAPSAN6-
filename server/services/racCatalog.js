@@ -46,7 +46,8 @@ export async function resolveRacCauseSelection(client,input={}) {
   }
 
   if(!category||!subtype){
-    const inferred=classifyCauseFromCatalog(`${input.subtypeName||''} ${input.fallbackText||''}`,requestedReportType);
+    const sourceInference=classifyCauseFromCatalog(input.subtypeName||'',requestedReportType);
+    const inferred=sourceInference.score>=100?sourceInference:classifyCauseFromCatalog(`${input.subtypeName||''} ${input.fallbackText||''}`,requestedReportType);
     const inferredCategory=catalog.find(item=>normalizeCauseText(item.code)===normalizeCauseText(inferred.causeCategoryCode))||null;
     const inferredSubtype=inferredCategory?.subtypes.find(row=>normalizeCauseText(row.name)===normalizeCauseText(inferred.causeSubtype))||null;
     if(!category)category=inferredCategory;

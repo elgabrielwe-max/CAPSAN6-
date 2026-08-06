@@ -204,7 +204,7 @@ racsRouter.post('/',requireCapability('rac:create'),async(req,res)=>{
     const unitSupervisors=(await client.query(`SELECT DISTINCT u.id,u.name FROM users u JOIN user_business_units ubu ON ubu.user_id=u.id WHERE ubu.business_unit_id=$1 AND u.role='SUPERVISOR' AND u.active=TRUE AND u.deleted_at IS NULL ORDER BY u.name,u.id`,[unitId])).rows;
     const primarySupervisor=unitSupervisors[0]||null;
     const prefix=bu.code||'RAC';const sequence=Number((await client.query(`SELECT COUNT(*)::int total FROM racs WHERE business_unit_id=$1 AND report_date=$2`,[unitId,reportDate])).rows[0].total)+1;const code=`${prefix}-${reportDate.replaceAll('-','')}-${String(sequence).padStart(4,'0')}-${crypto.randomBytes(2).toString('hex').toUpperCase()}`;
-    const fingerprints=buildRacFingerprints({businessUnitName:bu.name,reportDate,reporterName:b.reporterName,reportingArea:b.reportingArea,location:b.location,description});
+    const fingerprints=buildRacFingerprints({businessUnitName:bu.name,sourceReportNumber:b.sourceReportNumber,reportDate,reporterName:b.reporterName,reportingArea:b.reportingArea,reportedArea:b.reportedArea||b.reportingArea,location:b.location,description});
     const result=await client.query(`INSERT INTO racs(report_code,source_uid,source_report_number,business_unit_id,reporting_area_id,reported_area_id,reporter_name,reporter_type,location,report_date,risk_level,report_type,deviation_type,cause_category,cause_subtype,description,supervisor_user_id,supervisor_name_text,corrective_action,status,progress_percent,due_date,environmental_flag,environmental_category,environmental_confidence,record_fingerprint,content_fingerprint,created_by)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,'PENDIENTE',0,$20,$21,$22,$23,$24,$25,$26) RETURNING *`,[
       code,upper(b.sourceUid)||null,clean(b.sourceReportNumber)||null,unitId,reporting,reported,upper(b.reporterName),upper(b.reporterType)||'COLABORADOR',upper(b.location)||null,reportDate,risk,reportType,selectedCause.subtype.name,selectedCause.category.name,selectedCause.subtype.name,description,primarySupervisor?.id||null,primarySupervisor?.name||null,upper(b.correctiveAction)||null,dueDateForRisk(reportDate,risk),Boolean(ai?.environmental||selectedCause.category.code==='VI'),selectedCause.category.code==='VI'?selectedCause.subtype.name:ai?.environmentalCategory||null,ai?.confidence||null,fingerprints.recordFingerprint,fingerprints.contentFingerprint,req.user.id]);
@@ -340,7 +340,7 @@ racsRouter.post('/import',requireCapability('rac:import'),upload.single('file'),
           RETURNING id
         `,[
           r.externalId||null,r.sourceReportNumber,bu.id,reporting,reported,r.reporterName,r.reporterType,
-          r.location,r.reportDate,r.riskLevel,canonicalRacReportType(r.reportType)||selectedCause.reportType,selectedCause.subtype.name,selectedCause.category.name,
+          r.location,r.reportDate,r.riskLevel,canonicalRacReportType(r.reportType)||selectedCause.reportType,r.rawCause||r.deviationType||selectedCause.subtype.name,selectedCause.category.name,
           selectedCause.subtype.name,r.description,matchedSupervisor?.id||null,r.supervisorName||null,
           r.correctiveAction||null,r.status,r.progressPercent,dueDateForRisk(r.reportDate,r.riskLevel),
           Boolean(r.environmentalFlag||selectedCause.category.code==='VI'),selectedCause.category.code==='VI'?selectedCause.subtype.name:r.environmentalCategory,r.environmentalConfidence,r.sourceFile,
@@ -365,7 +365,7 @@ racsRouter.post('/import',requireCapability('rac:import'),upload.single('file'),
           RETURNING id
         `,[
           r.internalCode,r.externalId||null,r.sourceReportNumber,bu.id,reporting,reported,r.reporterName,r.reporterType,
-          r.location,r.reportDate,r.riskLevel,canonicalRacReportType(r.reportType)||selectedCause.reportType,selectedCause.subtype.name,selectedCause.category.name,
+          r.location,r.reportDate,r.riskLevel,canonicalRacReportType(r.reportType)||selectedCause.reportType,r.rawCause||r.deviationType||selectedCause.subtype.name,selectedCause.category.name,
           selectedCause.subtype.name,r.description,matchedSupervisor?.id||null,r.supervisorName||null,
           r.correctiveAction||null,r.status,r.progressPercent,dueDateForRisk(r.reportDate,r.riskLevel),
           Boolean(r.environmentalFlag||selectedCause.category.code==='VI'),selectedCause.category.code==='VI'?selectedCause.subtype.name:r.environmentalCategory,r.environmentalConfidence,r.sourceFile,

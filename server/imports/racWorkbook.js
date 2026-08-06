@@ -6,7 +6,7 @@ import { buildRacFingerprints, normalizeRacIdentity } from '../services/racRecon
 const aliases = {
   externalId:['ID UNICO ORIGEN','ID ÚNICO ORIGEN','CODIGO UNICO ORIGEN','CÓDIGO ÚNICO ORIGEN','UID RAC','ID ORIGEN'],
   businessUnit:['UNIDAD DE NEGOCIO','UNIDAD','UNIDAD OPERATIVA'],
-  code:['N DE REPORTE','NRO REPORTE','NUMERO DE REPORTE','REPORTE','RAC','RACS','N° DE REPORTE'],
+  code:['N° ORIGEN','N ORIGEN','NUMERO ORIGEN','N° DE REPORTE','N° REPORTE','N DE REPORTE','N REPORTE','NRO REPORTE','NUMERO DE REPORTE','ITEM','REPORTE','RACS','RAC'],
   reportingArea:['AREA REPORTANTE','AREA QUE REPORTA'],
   reporter:['DATOS DEL REPORTANTE','REPORTANTE','NOMBRE DEL REPORTANTE','TRABAJADOR','COLABORADOR'],
   reporterType:['COLABORADOR SUPERVISION','SUPERVISOR TRABAJADOR','SUPERVISOR COLABORADOR','TIPO REPORTANTE','ROL'],
@@ -14,11 +14,11 @@ const aliases = {
   level:['NIVEL','NV'], labor:['LABOR','EQUIPO','INSTALACION'],
   reportedArea:['AREA REPORTADA','AREA RESPONSABLE'],
   date:['FECHA','FECHA REPORTE','FECHA DE REPORTE'], risk:['NIVEL DE RIESGO','RIESGO'],
-  reportType:['TIPO DE REPORTE','TIPO RACS','ACTO CONDICION'],
+  reportType:['TIPO DE REPORTE','TIPO RACS','ACTO CONDICION','TIPO'],
   causeCategory:['TIPO DE CAUSA','CATEGORIA DE CAUSA','CATEGORÍA DE CAUSA'],
-  cause:['CAUSA SUBCAUSA','CAUSA / SUBCAUSA','SUBCAUSA','TIPO DE DESVIACION','DESVIACION','PROBLEMA','CAUSA','SUBTIPO'],
+  cause:['CAUSA SUBCAUSA','CAUSA / SUBCAUSA','SUBCAUSA','TIPO DE DESVIACION','TIPO DE DESVIACION 1','DESVIACION','PROBLEMA','CAUSA','SUBTIPO','SUBTIPO / CAUSA NORMALIZADA','SUBTIPO CAUSA NORMALIZADA'],
   description:['DESCRIPCION DEL RACS','DESCRIPCION DEL RAC S','DESCRIPCION','DETALLE'],
-  supervisor:['SUPERVISOR A CARGO','SUPERVISOR','RESPONSABLE'],
+  supervisor:['SUPERVISOR A CARGO','SUPERVISOR','RESPONSABLE','SUPERVISOR A CARGO DE LA ENTREGA','SUPERVISOR ACARGO DE LA ENTREGA','SUPERVISOR A CARGO ENTREGA'],
   action:['ACCION CORRECTIVA','ACCIONES','MEDIDA CORRECTIVA'],
   lifted:['LEVANTAMIENTO','SE LEVANTO','ESTADO','ESTADO ACTUAL'], progress:['AVANCE','PORCENTAJE','PORCENTAJE DE AVANCE']
 };
@@ -29,8 +29,24 @@ const clean = value => String(value ?? '').replace(/\s+/g,' ').trim();
 const upper = value => clean(value).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase();
 
 function field(row, name) {
-  const wanted = new Set(keys[name]);
-  for (const [key,value] of Object.entries(row || {})) if (wanted.has(normalizeHeader(key)) && clean(value)) return value;
+  const entries=Object.entries(row||{});
+  // Respeta la prioridad de alias. En particular, “N° origen / N° reporte / ITEM”
+  // son datos de origen y deben prevalecer sobre la columna interna “RAC”.
+  if(name==='code'){
+    const preferred=(keys.code||[]).filter(alias=>!['REPORTE','RACS','RAC'].includes(alias));
+    let preferredHeaderExists=false;
+    for(const wanted of preferred){
+      for(const [key,value] of entries){
+        if(normalizeHeader(key)!==wanted)continue;
+        preferredHeaderExists=true;
+        if(clean(value))return value;
+      }
+    }
+    if(preferredHeaderExists)return '';
+  }
+  for(const wanted of keys[name]||[]){
+    for(const [key,value] of entries)if(normalizeHeader(key)===wanted&&clean(value))return value;
+  }
   return '';
 }
 
@@ -79,9 +95,9 @@ export function normalizeExcelDate(value) {
 }
 
 function risk(value) { const n=upper(value); return n.includes('ALT')?'ALTO':n.includes('MED')?'MEDIO':'BAJO'; }
-function type(value, description='') { const n=upper(`${value} ${description}`); return n.includes('ACTO')?'ACTO SUBESTANDAR':'CONDICION SUBESTANDAR'; }
+function type(value, description='') { const explicit=upper(value); if(explicit.includes('ACTO'))return 'ACTO SUBESTANDAR'; if(explicit.includes('CONDICION'))return 'CONDICION SUBESTANDAR'; const n=upper(description); return n.includes('ACTO SUBESTANDAR')?'ACTO SUBESTANDAR':'CONDICION SUBESTANDAR'; }
 function progress(lift, pct) { const n=upper(lift); const number=Number(String(pct||'').replace('%','').replace(',','.'))||0; return ['SI','LEVANTADO','CERRADO','100'].includes(n)||number>=100?100:Math.max(0,Math.min(99,number)); }
-function sourceNumber(value) { const raw=clean(value); const match=raw.match(/\d+/); return match ? match[0] : raw; }
+function sourceNumber(value) { const raw=clean(value); const internal=raw.match(/^[A-Z0-9]+-\d{8}-(\d{4})(?:-\d{2})?-/i); if(internal)return String(Number(internal[1])); const match=raw.match(/\d+/); return match ? match[0] : raw; }
 
 export function analyzeRacWorkbook(buffer, fileName='archivo.xlsx', options={}) {
   const workbook=XLSX.read(buffer,{type:'buffer',cellDates:true});
@@ -112,7 +128,8 @@ export function analyzeRacWorkbook(buffer, fileName='archivo.xlsx', options={}) 
     if(!date)rowErrors.push('fecha inválida');
     rowErrors.forEach(x=>errors.push(`Fila ${sourceRow}: ${x}`));
     if(rowErrors.length)continue;
-    const source=sourceNumber(field(row,'code')) || String(records.length+1);
+    const sourceRaw=sourceNumber(field(row,'code'));
+    const source=sourceRaw||String(records.length+1);
     const occurrence=(occurrences.get(source)||0)+1; occurrences.set(source,occurrence);
     const ai=classifyRacLocal(`${field(row,'causeCategory')} ${field(row,'cause')} ${description}`);
     const reportType=type(field(row,'reportType'),description);
@@ -124,14 +141,16 @@ export function analyzeRacWorkbook(buffer, fileName='archivo.xlsx', options={}) 
     periods.set(date.slice(0,7),(periods.get(date.slice(0,7))||0)+1);
     const identitySeed=externalId||[unitName,date,source,occurrence,reporter,description].join('|');
     const hash=crypto.createHash('sha1').update(identitySeed).digest('hex').slice(0,12).toUpperCase();
-    const fingerprints=buildRacFingerprints({businessUnitName:unitName,reportDate:date,reporterName:reporter,reportingArea,location,description});
+    const reportedArea=(clean(field(row,'reportedArea'))||reportingArea).toUpperCase();
+    const rawCause=clean(field(row,'cause'));
+    const fingerprints=buildRacFingerprints({businessUnitName:unitName,sourceReportNumber:source,reportDate:date,reporterName:reporter,reportingArea,reportedArea,location,description});
     records.push({
       sourceRow, externalId:externalId||null, sourceReportNumber:source,
-      sourceNumberUnique:sourceCounts.get(source)===1, sourceNumberOccurrence:occurrence,
+      sourceNumberUnique:sourceRaw?sourceCounts.get(source)===1:true, sourceNumberOccurrence:occurrence,
       internalCode:`${options.unitCode||'RAC'}-${date.replaceAll('-','')}-${String(source).padStart(4,'0')}${occurrence>1?`-${String(occurrence).padStart(2,'0')}`:''}-${hash.slice(0,4)}`,
-      businessUnitName:unitName, reportingArea:reportingArea.toUpperCase(), reportedArea:(clean(field(row,'reportedArea'))||reportingArea).toUpperCase(),
+      businessUnitName:unitName, reportingArea:reportingArea.toUpperCase(), reportedArea,
       reporterName:reporter.toUpperCase(), reporterType:(clean(field(row,'reporterType'))||'COLABORADOR').toUpperCase(), location:location.toUpperCase(), reportDate:date,
-      riskLevel:risk(field(row,'risk')), reportType, causeCategory:causeCategory.toUpperCase(), causeSubtype:cause.toUpperCase(), deviationType:cause.toUpperCase(),
+      riskLevel:risk(field(row,'risk')), reportType, causeCategory:causeCategory.toUpperCase(), causeSubtype:cause.toUpperCase(), deviationType:rawCause.toUpperCase(), rawCause:rawCause.toUpperCase(),
       description:description.toUpperCase(), supervisorName:clean(field(row,'supervisor')).toUpperCase(), correctiveAction:clean(field(row,'action')).toUpperCase(),
       status:p>=100?'LEVANTADO':p>0?'EN PROCESO':'PENDIENTE', progressPercent:p, environmentalFlag:ai.environmental,
       environmentalCategory:ai.environmentalCategory, environmentalConfidence:ai.confidence, sourceFile:fileName, sourceSheet:chosen.name,
@@ -141,8 +160,8 @@ export function analyzeRacWorkbook(buffer, fileName='archivo.xlsx', options={}) 
   const periodList=[...periods.entries()].sort((a,b)=>b[1]-a[1]).map(([period,total])=>({period,total}));
   if(periodList.length>1)warnings.push(`El archivo contiene varios periodos: ${periodList.map(x=>x.period).join(', ')}`);
   const repeated=[...sourceCounts.entries()].filter(([,n])=>n>1).reduce((s,[,n])=>s+n-1,0);
-  if(repeated)warnings.push(`${repeated} números de reporte repetidos se conservarán como RACS independientes`);
+  if(repeated)warnings.push(`${repeated} números de reporte están repetidos. Solo se consolidarán cuando fecha, reportante, áreas, lugar y descripción sean exactamente iguales; en caso contrario se conservarán como RACS independientes.`);
   const missingStableIds=records.filter(record=>!record.externalId).length;
-  if(missingStableIds)warnings.push(`${missingStableIds} RACS no tienen ID ÚNICO ORIGEN. Se aplicará conciliación por fecha, reportante y descripción; usa el modelo oficial para evitar duplicidad.`);
+  if(missingStableIds)warnings.push(`${missingStableIds} RACS no tienen ID ÚNICO ORIGEN. Se aplicará conciliación estricta por unidad, número de origen, fecha, reportante, áreas, lugar y descripción; usa el modelo oficial para evitar duplicidad.`);
   return { sheetName:chosen.name, headerRow:chosen.headerRow+1, totalRows:rows.length, validRows:records.length, rejectedRows:errors.length, records, errors, warnings, periods:periodList, dominantPeriod:periodList[0]?.period||null, repeatedNumbers:repeated, stableIds:records.length-missingStableIds, missingStableIds };
 }

@@ -12,7 +12,7 @@ test('números de reporte repetidos no se usan como clave única de conciliació
 });
 
 test('el importador marca ocurrencia y unicidad del número de reporte',()=>{
-  assert.match(workbookSource,/sourceNumberUnique:sourceCounts\.get\(source\)===1/);
+  assert.match(workbookSource,/sourceNumberUnique:sourceRaw\?sourceCounts\.get\(source\)===1:true/);
   assert.match(workbookSource,/sourceNumberOccurrence:occurrence/);
   assert.match(workbookSource,/occurrence>1/);
 });
@@ -24,7 +24,7 @@ test('la verificación final cuenta RACS únicos afectados y reporta filas conso
   assert.doesNotMatch(racsSource,/verified!==inserted\+updated/);
 });
 
-test('versión del paquete corresponde al hotfix 4.0.31',()=>{
+test('la compatibilidad del hotfix 4.0.31 se conserva en la versión actual',()=>{
   const pkg=JSON.parse(fs.readFileSync(new URL('../package.json',import.meta.url),'utf8'));
-  assert.equal(pkg.version,'4.0.31');
+  assert.equal(pkg.version,'4.0.32');
 });

@@ -1,7 +1,18 @@
-# CAPSAN6 4.0.24 · Sistema Integral de Gestión SSOMA
+# CAPSAN6 4.0.32 · Sistema Integral de Gestión SSOMA
 
 
 
+## Corrección 4.0.32 · Identidad real y trazabilidad de RACS
+
+- Evita fusionar observaciones distintas que solo comparten descripción.
+- La identidad considera unidad, número de origen, fecha, reportante, áreas, lugar y descripción.
+- Consolida únicamente duplicados exactos, incluidos los 11 repetidos reales detectados en Diamantina.
+- Recupera como registros independientes los seis RACS válidos que antes se habían fusionado.
+- Prioriza la numeración original del Excel y conserva secuencias históricas.
+- Reconoce el encabezado de responsable usado por Planta Mahuara.
+- Conserva el tipo de reporte y el texto de causa proporcionados por el archivo.
+- Normaliza las causas reales contra el catálogo sin convertirlas indebidamente en Orden y limpieza.
+- La reimportación conserva estados, evidencias, asignaciones, direccionamiento e historial.
 
 ## Mejora 4.0.24 · PPT Control RACS por unidad
 

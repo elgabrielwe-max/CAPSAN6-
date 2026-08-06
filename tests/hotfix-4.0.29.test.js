@@ -36,7 +36,7 @@ test('INSERT de importación RACS tiene la misma cantidad de columnas y expresio
   assert.equal(Math.max(...[...rawValues.matchAll(/\$(\d+)/g)].map(item=>Number(item[1]))),32);
 });
 
-test('versión del paquete corresponde al hotfix 4.0.31',()=>{
+test('el hotfix previo permanece cubierto por la versión actual',()=>{
   const pkg=JSON.parse(fs.readFileSync(new URL('../package.json',import.meta.url),'utf8'));
-  assert.equal(pkg.version,'4.0.31');
+  assert.equal(pkg.version,'4.0.32');
 });

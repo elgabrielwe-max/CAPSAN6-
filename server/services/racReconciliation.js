@@ -4,19 +4,41 @@ const clean=value=>String(value??'').trim().replace(/\s+/g,' ');
 export const normalizeRacIdentity=value=>clean(value).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase().replace(/[^A-Z0-9]+/g,' ').trim();
 export const shouldMatchBySourceReportNumber=record=>Boolean(record?.sourceReportNumber)&&record?.sourceNumberUnique!==false;
 const hash=value=>crypto.createHash('sha256').update(String(value||'')).digest('hex');
+const dateOnly=value=>String(value||'').slice(0,10);
+
+function identityParts(record={}){
+  return{
+    unit:normalizeRacIdentity(record.businessUnitName||record.business_unit_name||record.business_unit||record.unitName||record.unitKey),
+    source:normalizeRacIdentity(record.sourceReportNumber||record.source_report_number),
+    date:dateOnly(record.reportDate||record.report_date),
+    reporter:normalizeRacIdentity(record.reporterName||record.reporter_name),
+    reportingArea:normalizeRacIdentity(record.reportingArea||record.reporting_area_name||record.reporting_area),
+    reportedArea:normalizeRacIdentity(record.reportedArea||record.reported_area_name||record.reported_area),
+    location:normalizeRacIdentity(record.location),
+    description:normalizeRacIdentity(record.description)
+  };
+}
 
 export function buildRacFingerprints(record={}){
-  const unit=normalizeRacIdentity(record.businessUnitName||record.business_unit||record.unitName||record.unitKey);
-  const date=String(record.reportDate||record.report_date||'').slice(0,10);
-  const reporter=normalizeRacIdentity(record.reporterName||record.reporter_name);
-  const description=normalizeRacIdentity(record.description);
-  const location=normalizeRacIdentity(record.location);
-  const area=normalizeRacIdentity(record.reportingArea||record.reporting_area);
+  const p=identityParts(record);
+  const content=[p.unit,p.date,p.reporter,p.reportingArea,p.reportedArea,p.location,p.description].join('|');
+  const strict=[p.unit,p.date,p.source,p.reporter,p.reportingArea,p.reportedArea,p.location,p.description].join('|');
   return{
-    recordFingerprint:hash([unit,date,reporter,description].join('|')),
-    contentFingerprint:hash([unit,date,description].join('|')),
-    extendedFingerprint:hash([unit,date,reporter,area,location,description].join('|'))
+    recordFingerprint:hash(strict),
+    contentFingerprint:hash(content),
+    extendedFingerprint:hash(content),
+    legacyRecordFingerprint:hash([p.unit,p.date,p.reporter,p.description].join('|')),
+    legacyContentFingerprint:hash([p.unit,p.date,p.description].join('|'))
   };
+}
+
+export function sameRacContentIdentity(left={},right={}){
+  const a=identityParts(left),b=identityParts(right);
+  return Boolean(a.date&&a.reporter&&a.location&&a.description&&
+    a.date===b.date&&a.reporter===b.reporter&&a.location===b.location&&a.description===b.description&&
+    (!a.unit||!b.unit||a.unit===b.unit)&&
+    (!a.reportingArea||a.reportingArea===b.reportingArea)&&
+    (!a.reportedArea||a.reportedArea===b.reportedArea));
 }
 
 const statusWeight=status=>({
@@ -40,24 +62,58 @@ export function chooseBestReconciliationSnapshot(rows=[]){
   })[0]||null;
 }
 
+function rankActiveCandidate(row){
+  return statusWeight(row.status)*100000+Number(row.progress_percent||0)*1000+Number(row.evidence_count||0)*10+Number(row.operational_change_count||0);
+}
+
+function chooseActive(rows=[]){
+  return [...rows].sort((a,b)=>rankActiveCandidate(b)-rankActiveCandidate(a)||Number(b.id)-Number(a.id))[0]||null;
+}
+
+async function queryActive(client,businessUnitId,clause,params=[]){
+  return (await client.query(`
+    SELECT r.*,bu.name business_unit_name,ar.name reporting_area_name,ad.name reported_area_name,
+      (SELECT COUNT(*)::int FROM rac_evidence e WHERE e.rac_id=r.id) evidence_count,
+      (SELECT COUNT(*)::int FROM audit_log al WHERE al.entity_type='RAC' AND al.entity_id=r.id::text AND al.action IN ('ASSIGN_RAC','UPDATE_RAC_STATUS','DIRECT_RAC','EDIT_RAC')) operational_change_count
+    FROM racs r
+    LEFT JOIN business_units bu ON bu.id=r.business_unit_id
+    LEFT JOIN areas ar ON ar.id=r.reporting_area_id
+    LEFT JOIN areas ad ON ad.id=r.reported_area_id
+    WHERE r.business_unit_id=$1 AND ${clause}
+    ORDER BY (r.status='LEVANTADO') DESC,r.progress_percent DESC,evidence_count DESC,r.updated_at DESC,r.id DESC
+  `,[businessUnitId,...params])).rows;
+}
+
 async function activeCandidates(client,record,businessUnitId){
-  const attempts=[];
-  if(record.externalId)attempts.push({sql:`r.source_uid=$2`,params:[businessUnitId,record.externalId]});
-  if(shouldMatchBySourceReportNumber(record))attempts.push({sql:`r.source_report_number=$2 AND r.report_date=$3::date`,params:[businessUnitId,record.sourceReportNumber,record.reportDate],uniqueOnly:true});
-  if(record.recordFingerprint)attempts.push({sql:`r.record_fingerprint=$2`,params:[businessUnitId,record.recordFingerprint]});
-  if(record.contentFingerprint)attempts.push({sql:`r.content_fingerprint=$2`,params:[businessUnitId,record.contentFingerprint],uniqueOnly:true});
-  for(const attempt of attempts){
-    const rows=(await client.query(`
-      SELECT r.*,
-        (SELECT COUNT(*)::int FROM rac_evidence e WHERE e.rac_id=r.id) evidence_count,
-        (SELECT COUNT(*)::int FROM audit_log al WHERE al.entity_type='RAC' AND al.entity_id=r.id::text AND al.action IN ('ASSIGN_RAC','UPDATE_RAC_STATUS','DIRECT_RAC','EDIT_RAC')) operational_change_count
-      FROM racs r
-      WHERE r.business_unit_id=$1 AND ${attempt.sql}
-      ORDER BY (r.status='LEVANTADO') DESC,r.progress_percent DESC,evidence_count DESC,r.updated_at DESC,r.id DESC
-    `,attempt.params)).rows;
-    if(rows.length===1||(!attempt.uniqueOnly&&rows.length))return rows[0];
+  if(record.externalId){
+    const rows=await queryActive(client,businessUnitId,'r.source_uid=$2',[record.externalId]);
+    if(rows.length)return chooseActive(rows);
   }
-  return null;
+
+  if(shouldMatchBySourceReportNumber(record)){
+    const rows=await queryActive(client,businessUnitId,'r.source_report_number=$2 AND r.report_date=$3::date',[record.sourceReportNumber,record.reportDate]);
+    if(rows.length===1)return rows[0];
+    const exact=rows.filter(row=>sameRacContentIdentity(record,row));
+    if(exact.length)return chooseActive(exact);
+  }
+
+  if(record.recordFingerprint){
+    const rows=await queryActive(client,businessUnitId,'r.record_fingerprint=$2',[record.recordFingerprint]);
+    if(rows.length)return chooseActive(rows);
+  }
+
+  if(record.contentFingerprint){
+    const rows=await queryActive(client,businessUnitId,'r.content_fingerprint=$2',[record.contentFingerprint]);
+    const exact=rows.filter(row=>sameRacContentIdentity(record,row));
+    if(exact.length)return chooseActive(exact);
+  }
+
+  // Compatibilidad con importaciones anteriores: busca por la identidad real del hallazgo,
+  // nunca solo por descripción. Esto permite corregir números de origen dañados sin fusionar
+  // reportantes o lugares diferentes.
+  const sameDate=await queryActive(client,businessUnitId,'r.report_date=$2::date',[record.reportDate]);
+  const exact=sameDate.filter(row=>sameRacContentIdentity(record,row));
+  return exact.length?chooseActive(exact):null;
 }
 
 export async function findActiveRacMatch(client,record,businessUnitId){
@@ -70,17 +126,41 @@ export async function findActiveRacMatch(client,record,businessUnitId){
   return row;
 }
 
+function memorySnapshot(row){
+  const snapshot=snapshotValue(row);
+  return{
+    ...snapshot,
+    business_unit_name:snapshot.business_unit||snapshot.business_unit_name,
+    reporting_area_name:snapshot.reporting_area||snapshot.reporting_area_name,
+    reported_area_name:snapshot.reported_area||snapshot.reported_area_name,
+    source_report_number:row.source_report_number||snapshot.source_report_number,
+    report_date:row.report_date||snapshot.report_date
+  };
+}
+
 export async function findReconciliationMemory(client,record,businessUnitId){
-  const attempts=[];
-  if(record.externalId)attempts.push({sql:`source_uid=$2`,params:[businessUnitId,record.externalId]});
-  if(shouldMatchBySourceReportNumber(record))attempts.push({sql:`source_report_number=$2 AND report_date=$3::date`,params:[businessUnitId,record.sourceReportNumber,record.reportDate],uniqueOnly:true});
-  if(record.recordFingerprint)attempts.push({sql:`record_fingerprint=$2`,params:[businessUnitId,record.recordFingerprint]});
-  if(record.contentFingerprint)attempts.push({sql:`content_fingerprint=$2`,params:[businessUnitId,record.contentFingerprint],uniqueOnly:true});
-  for(const attempt of attempts){
-    const rows=(await client.query(`SELECT * FROM rac_reconciliation_memory WHERE restored_at IS NULL AND business_unit_id=$1 AND ${attempt.sql} ORDER BY created_at DESC,id DESC`,attempt.params)).rows;
-    if(rows.length===1||(!attempt.uniqueOnly&&rows.length))return rows;
+  const base=`SELECT * FROM rac_reconciliation_memory WHERE restored_at IS NULL AND business_unit_id=$1`;
+  if(record.externalId){
+    const rows=(await client.query(`${base} AND source_uid=$2 ORDER BY created_at DESC,id DESC`,[businessUnitId,record.externalId])).rows;
+    if(rows.length)return rows;
   }
-  return[];
+  if(shouldMatchBySourceReportNumber(record)){
+    const rows=(await client.query(`${base} AND source_report_number=$2 AND report_date=$3::date ORDER BY created_at DESC,id DESC`,[businessUnitId,record.sourceReportNumber,record.reportDate])).rows;
+    if(rows.length===1)return rows;
+    const exact=rows.filter(row=>sameRacContentIdentity(record,memorySnapshot(row)));
+    if(exact.length)return exact;
+  }
+  if(record.recordFingerprint){
+    const rows=(await client.query(`${base} AND record_fingerprint=$2 ORDER BY created_at DESC,id DESC`,[businessUnitId,record.recordFingerprint])).rows;
+    if(rows.length)return rows;
+  }
+  if(record.contentFingerprint){
+    const rows=(await client.query(`${base} AND content_fingerprint=$2 ORDER BY created_at DESC,id DESC`,[businessUnitId,record.contentFingerprint])).rows;
+    const exact=rows.filter(row=>sameRacContentIdentity(record,memorySnapshot(row)));
+    if(exact.length)return exact;
+  }
+  const sameDate=(await client.query(`${base} AND report_date=$2::date ORDER BY created_at DESC,id DESC`,[businessUnitId,record.reportDate])).rows;
+  return sameDate.filter(row=>sameRacContentIdentity(record,memorySnapshot(row)));
 }
 
 export async function rememberRacsBeforePurge(client,selected,purgeReference){
@@ -88,9 +168,11 @@ export async function rememberRacsBeforePurge(client,selected,purgeReference){
   for(const rac of selected){
     const fingerprints=buildRacFingerprints({
       businessUnitName:rac.business_unit,
+      sourceReportNumber:rac.source_report_number,
       reportDate:rac.report_date,
       reporterName:rac.reporter_name,
       reportingArea:rac.reporting_area,
+      reportedArea:rac.reported_area,
       location:rac.location,
       description:rac.description
     });
@@ -101,7 +183,7 @@ export async function rememberRacsBeforePurge(client,selected,purgeReference){
       record_fingerprint,content_fingerprint,rac_snapshot,evidence_snapshot,assignments_snapshot
     ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10::jsonb,$11::jsonb)`,[
       purgeReference,rac.id,rac.business_unit_id,rac.source_uid||null,rac.source_report_number||null,rac.report_date,
-      rac.record_fingerprint||fingerprints.recordFingerprint,rac.content_fingerprint||fingerprints.contentFingerprint,
+      fingerprints.recordFingerprint,fingerprints.contentFingerprint,
       JSON.stringify(rac),JSON.stringify(evidence),JSON.stringify(assignments)
     ]);
     remembered++;

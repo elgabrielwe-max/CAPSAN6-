@@ -13,8 +13,8 @@ test('4.0.27 crea el índice de direccionamiento después de agregar columnas',(
   assert.ok(indexPos>ensurePos,'idx_racs_direction debe crearse después de ensureColumns()');
 });
 
-test('4.0.27 registra versión y arranque correctos',()=>{
-  assert.equal(pkg.version,'4.0.31');
+test('4.0.27 conserva su migración dentro de la versión actual',()=>{
+  assert.equal(pkg.version,'4.0.32');
   assert.match(schema,/VALUES\('4\.0\.27'\)/);
-  assert.match(index,/CAPSAN6 4\.0\.31 ejecutándose/);
+  assert.match(index,/CAPSAN6 4\.0\.32 ejecutándose/);
 });
