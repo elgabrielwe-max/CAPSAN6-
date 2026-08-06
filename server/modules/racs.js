@@ -15,7 +15,7 @@ import { audit, notify } from '../services/audit.js';
 import { unitScope, parseFilters } from '../scope.js';
 import { config } from '../config.js';
 import { dueDateForRisk } from '../services/racDeadlines.js';
-import { buildRacFingerprints, findActiveRacMatch, findReconciliationMemory, rememberRacsBeforePurge, restoreReconciliationMemory, allocateUniqueRacReportCode } from '../services/racReconciliation.js';
+import { buildRacFingerprints, findActiveRacMatch, findReconciliationMemory, rememberRacsBeforePurge, restoreReconciliationMemory, allocateUniqueRacReportCode, recoverHistoricalEvidence } from '../services/racReconciliation.js';
 
 const upload=multer({storage:multer.memoryStorage(),limits:{fileSize:25*1024*1024}});
 export const racsRouter=Router();
@@ -193,6 +193,23 @@ racsRouter.post('/cause-categories',requireCapability('rac:catalog.manage'),asyn
   await audit(req,'CREATE_RAC_CAUSE_CATEGORY','RAC_CAUSE_CATEGORY',category.id,{code:category.code,name:category.name,reportType:category.reportType});
   res.status(201).json(category);
 });
+
+racsRouter.post('/reconciliation/evidence-recovery/preview',requireCapability('rac:direct'),asyncRoute(async(req,res)=>{
+  const requestedUnit=Number(req.body.businessUnitId||0);
+  if(requestedUnit&&!assertUnitAccess(req.user,requestedUnit))return res.status(403).json({error:'Unidad fuera de tu alcance'});
+  const businessUnitIds=requestedUnit?[requestedUnit]:(req.user.role==='MASTER'?null:req.user.unitIds||[]);
+  const result=await recoverHistoricalEvidence(pool,{businessUnitIds,from:req.body.from||null,to:req.body.to||null,actorId:req.user.id,dryRun:true});
+  res.json({...result,dryRun:true});
+}));
+
+racsRouter.post('/reconciliation/evidence-recovery/execute',requireCapability('rac:direct'),asyncRoute(async(req,res)=>{
+  const requestedUnit=Number(req.body.businessUnitId||0);
+  if(requestedUnit&&!assertUnitAccess(req.user,requestedUnit))return res.status(403).json({error:'Unidad fuera de tu alcance'});
+  const businessUnitIds=requestedUnit?[requestedUnit]:(req.user.role==='MASTER'?null:req.user.unitIds||[]);
+  const result=await tx(client=>recoverHistoricalEvidence(client,{businessUnitIds,from:req.body.from||null,to:req.body.to||null,actorId:req.user.id,dryRun:false}));
+  await audit(req,'RECOVER_RAC_EVIDENCE','RAC_RECONCILIATION','HISTORICAL_EVIDENCE',{...result,businessUnitIds,from:req.body.from||null,to:req.body.to||null});
+  res.json({...result,dryRun:false});
+}));
 
 racsRouter.post('/',requireCapability('rac:create'),async(req,res)=>{
   const b=req.body;const unitId=Number(b.businessUnitId);if(!assertUnitAccess(req.user,unitId))return res.status(403).json({error:'Unidad fuera de tu alcance'});
@@ -394,6 +411,12 @@ racsRouter.post('/import',requireCapability('rac:import'),upload.single('file'),
       touchedRacIds.add(normalizedRacId);
     }
 
+    const sortedImportDates=importRecords.map(row=>row.reportDate).filter(Boolean).sort();
+    const historicalEvidenceRecovery=await recoverHistoricalEvidence(client,{
+      businessUnitIds:[Number(bu.id)],from:sortedImportDates[0]||null,to:sortedImportDates.at(-1)||null,actorId:req.user.id,dryRun:false
+    });
+    restoredEvidence+=Number(historicalEvidenceRecovery.inserted||0)+Number(historicalEvidenceRecovery.moved||0);
+
     const touchedIds=[...touchedRacIds];
     const expectedUnique=touchedIds.length;
     const verified=expectedUnique?Number((await client.query(`
@@ -420,6 +443,7 @@ racsRouter.post('/import',requireCapability('rac:import'),upload.single('file'),
     const periodTotal=periodForTotal?Number((await client.query(`SELECT COUNT(*)::int total FROM racs WHERE business_unit_id=$1::int AND TO_CHAR(report_date,'YYYY-MM')=$2::text`,[bu.id,periodForTotal])).rows[0].total):centralTotal;
     return{
       batchId:batch.id,inserted,updated,reconciled,restoredEvidence,duplicatesMerged,preservedOperational,
+      historicalEvidenceRecovery,
       processedRows:importRecords.length,uniqueAffected:expectedUnique,sourceRowsConsolidated,reportCodesRegenerated,verified,centralTotal,periodTotal,
       rejected:analysis.errors.length,period:detectedPeriod,importedPeriods,periodMode,warnings:analysis.warnings
     };

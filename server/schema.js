@@ -558,8 +558,14 @@ export async function initSchema() {
     assignments_snapshot JSONB NOT NULL DEFAULT '[]'::jsonb,
     restored_at TIMESTAMPTZ,
     restored_rac_id INTEGER,
+    evidence_recovered_at TIMESTAMPTZ,
+    evidence_recovered_rac_id INTEGER,
+    evidence_recovery_method VARCHAR(80),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )`);
+  await q(`ALTER TABLE rac_reconciliation_memory ADD COLUMN IF NOT EXISTS evidence_recovered_at TIMESTAMPTZ`);
+  await q(`ALTER TABLE rac_reconciliation_memory ADD COLUMN IF NOT EXISTS evidence_recovered_rac_id INTEGER`);
+  await q(`ALTER TABLE rac_reconciliation_memory ADD COLUMN IF NOT EXISTS evidence_recovery_method VARCHAR(80)`);
   await q(`CREATE INDEX IF NOT EXISTS idx_rac_reconciliation_match ON rac_reconciliation_memory(business_unit_id,source_uid,source_report_number,report_date,record_fingerprint,content_fingerprint)`);
   await q(`CREATE INDEX IF NOT EXISTS idx_rac_reconciliation_pending ON rac_reconciliation_memory(restored_at,business_unit_id)`);
 
@@ -692,6 +698,7 @@ export async function initSchema() {
   await q(`INSERT INTO schema_migrations(version) VALUES('4.0.30') ON CONFLICT DO NOTHING`);
   await q(`INSERT INTO schema_migrations(version) VALUES('4.0.31') ON CONFLICT DO NOTHING`);
   await q(`INSERT INTO schema_migrations(version) VALUES('4.0.33') ON CONFLICT DO NOTHING`);
+  await q(`INSERT INTO schema_migrations(version) VALUES('4.0.34') ON CONFLICT DO NOTHING`);
   await q(`INSERT INTO schema_migrations(version) VALUES('4.0.3') ON CONFLICT DO NOTHING`);
   await q(`INSERT INTO schema_migrations(version) VALUES('4.0.4') ON CONFLICT DO NOTHING`);
   await q(`INSERT INTO schema_migrations(version) VALUES('4.0.6') ON CONFLICT DO NOTHING`);

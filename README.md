@@ -1,6 +1,16 @@
-# CAPSAN6 4.0.33 · Sistema Integral de Gestión SSOMA
+# CAPSAN6 4.0.34 · Sistema Integral de Gestión SSOMA
 
 
+
+
+## Corrección 4.0.34 · Descripción visible y recuperación histórica de evidencias
+
+- El Listado direccionado muestra la descripción completa y el total de evidencias de cada RAC.
+- Máster y SSOMA pueden revisar y ejecutar la recuperación de evidencias guardadas antes de una depuración.
+- La relación prioriza ID único, huellas, número de origen, fecha, reportante y lugar.
+- La descripción se usa como apoyo únicamente cuando la coincidencia dentro de la unidad y fecha es única y segura.
+- Las evidencias ya existentes no se duplican; las vinculadas a un RAC incorrecto pueden reasignarse cuando la coincidencia correcta tiene mayor precisión.
+- Cada importación vuelve a revisar automáticamente las evidencias históricas del periodo importado.
 
 ## Corrección 4.0.33 · Identidad real y trazabilidad de RACS
 

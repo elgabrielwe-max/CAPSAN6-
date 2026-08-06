@@ -75,7 +75,7 @@ test('los seis casos detectados en la comparación conservan su identidad correc
   }
 });
 
-test('versión corresponde a CAPSAN6 4.0.33',()=>{
+test('versión corresponde a CAPSAN6 4.0.34',()=>{
   const pkg=JSON.parse(fs.readFileSync(new URL('../package.json',import.meta.url),'utf8'));
-  assert.equal(pkg.version,'4.0.33');
+  assert.equal(pkg.version,'4.0.34');
 });
