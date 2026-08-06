@@ -281,3 +281,11 @@ Los cierres antiguos sin archivo y sin excepción permanecen como **Sin sustento
 - Los 13 parámetros de la evidencia se convierten explícitamente a tipos compatibles dentro de un CTE.
 - Conserva estado, evidencias, asignaciones, direccionamiento e historial recuperados desde la memoria de conciliación.
 - La operación continúa siendo transaccional y no guarda importaciones parciales cuando ocurre un error.
+
+
+## Hotfix 4.0.31 · Verificación conciliada de importación
+
+- La verificación final cuenta RACS únicos realmente afectados, no operaciones de fila.
+- Las filas que representan el mismo RAC pueden consolidarse sin provocar error 500.
+- Los números de reporte repetidos dentro de un mismo Excel ya no se usan como clave única de coincidencia.
+- El resumen de importación informa filas procesadas, RACS únicos afectados y filas consolidadas.

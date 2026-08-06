@@ -126,7 +126,9 @@ export function analyzeRacWorkbook(buffer, fileName='archivo.xlsx', options={}) 
     const hash=crypto.createHash('sha1').update(identitySeed).digest('hex').slice(0,12).toUpperCase();
     const fingerprints=buildRacFingerprints({businessUnitName:unitName,reportDate:date,reporterName:reporter,reportingArea,location,description});
     records.push({
-      sourceRow, externalId:externalId||null, sourceReportNumber:source, internalCode:`${options.unitCode||'RAC'}-${date.replaceAll('-','')}-${String(source).padStart(4,'0')}${occurrence>1?`-${String(occurrence).padStart(2,'0')}`:''}-${hash.slice(0,4)}`,
+      sourceRow, externalId:externalId||null, sourceReportNumber:source,
+      sourceNumberUnique:sourceCounts.get(source)===1, sourceNumberOccurrence:occurrence,
+      internalCode:`${options.unitCode||'RAC'}-${date.replaceAll('-','')}-${String(source).padStart(4,'0')}${occurrence>1?`-${String(occurrence).padStart(2,'0')}`:''}-${hash.slice(0,4)}`,
       businessUnitName:unitName, reportingArea:reportingArea.toUpperCase(), reportedArea:(clean(field(row,'reportedArea'))||reportingArea).toUpperCase(),
       reporterName:reporter.toUpperCase(), reporterType:(clean(field(row,'reporterType'))||'COLABORADOR').toUpperCase(), location:location.toUpperCase(), reportDate:date,
       riskLevel:risk(field(row,'risk')), reportType, causeCategory:causeCategory.toUpperCase(), causeSubtype:cause.toUpperCase(), deviationType:cause.toUpperCase(),

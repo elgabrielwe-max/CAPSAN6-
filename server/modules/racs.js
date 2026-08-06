@@ -288,7 +288,8 @@ racsRouter.post('/import',requireCapability('rac:import'),upload.single('file'),
       return id;
     };
 
-    let inserted=0,updated=0,reconciled=0,restoredEvidence=0,duplicatesMerged=0,preservedOperational=0;
+    let inserted=0,updated=0,reconciled=0,restoredEvidence=0,duplicatesMerged=0,preservedOperational=0,sourceRowsConsolidated=0;
+    const touchedRacIds=new Set();
     for(const r of importRecords){
       const reporting=await resolveArea(r.reportingArea);
       const reported=await resolveArea(r.reportedArea);
@@ -385,22 +386,38 @@ racsRouter.post('/import',requireCapability('rac:import'),upload.single('file'),
         await client.query(`UPDATE rac_assignments SET active=FALSE WHERE rac_id=$1 AND supervisor_user_id<>$2 AND active=TRUE`,[racId,matchedSupervisor.id]);
         await client.query(`INSERT INTO rac_assignments(rac_id,supervisor_user_id,assigned_by,active) VALUES($1,$2,$3,TRUE) ON CONFLICT DO NOTHING`,[racId,matchedSupervisor.id,req.user.id]);
       }
+
+      const normalizedRacId=Number(racId);
+      if(touchedRacIds.has(normalizedRacId))sourceRowsConsolidated++;
+      touchedRacIds.add(normalizedRacId);
     }
 
-    const verified=Number((await client.query(`SELECT COUNT(*)::int total FROM racs WHERE import_batch_id=$1`,[batch.id])).rows[0].total);
-    if(verified!==inserted+updated)throw Object.assign(new Error(`La verificación central esperaba ${inserted+updated} RACS y encontró ${verified}`),{status:500});
+    const touchedIds=[...touchedRacIds];
+    const expectedUnique=touchedIds.length;
+    const verified=expectedUnique?Number((await client.query(`
+      SELECT COUNT(*)::int total
+      FROM racs
+      WHERE import_batch_id=$1 AND id=ANY($2::int[])
+    `,[batch.id,touchedIds])).rows[0].total):0;
+    if(verified!==expectedUnique)throw Object.assign(new Error(`La verificación central esperaba ${expectedUnique} RACS únicos y encontró ${verified}`),{status:500});
 
     await client.query(`
       UPDATE rac_import_batches
-      SET rows_inserted=$1,inserted_rows=$1,rows_updated=$2,updated_rows=$2,status='COMPLETADO'
+      SET rows_inserted=$1,inserted_rows=$1,rows_updated=$2,updated_rows=$2,status='COMPLETADO',
+          summary=COALESCE(summary,'{}'::jsonb)||jsonb_build_object(
+            'processedRows',$4::int,
+            'uniqueAffected',$5::int,
+            'sourceRowsConsolidated',$6::int
+          )
       WHERE id=$3
-    `,[inserted,updated,batch.id]);
+    `,[inserted,updated,batch.id,importRecords.length,expectedUnique,sourceRowsConsolidated]);
 
     const centralTotal=Number((await client.query(`SELECT COUNT(*)::int total FROM racs WHERE business_unit_id=$1`,[bu.id])).rows[0].total);
     const periodForTotal=importedPeriods.length===1?importedPeriods[0]:analysis.dominantPeriod;
     const periodTotal=periodForTotal?Number((await client.query(`SELECT COUNT(*)::int total FROM racs WHERE business_unit_id=$1::int AND TO_CHAR(report_date,'YYYY-MM')=$2::text`,[bu.id,periodForTotal])).rows[0].total):centralTotal;
     return{
-      batchId:batch.id,inserted,updated,reconciled,restoredEvidence,duplicatesMerged,preservedOperational,verified,centralTotal,periodTotal,
+      batchId:batch.id,inserted,updated,reconciled,restoredEvidence,duplicatesMerged,preservedOperational,
+      processedRows:importRecords.length,uniqueAffected:expectedUnique,sourceRowsConsolidated,verified,centralTotal,periodTotal,
       rejected:analysis.errors.length,period:detectedPeriod,importedPeriods,periodMode,warnings:analysis.warnings
     };
   });

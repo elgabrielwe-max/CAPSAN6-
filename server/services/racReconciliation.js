@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 
 const clean=value=>String(value??'').trim().replace(/\s+/g,' ');
 export const normalizeRacIdentity=value=>clean(value).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase().replace(/[^A-Z0-9]+/g,' ').trim();
+export const shouldMatchBySourceReportNumber=record=>Boolean(record?.sourceReportNumber)&&record?.sourceNumberUnique!==false;
 const hash=value=>crypto.createHash('sha256').update(String(value||'')).digest('hex');
 
 export function buildRacFingerprints(record={}){
@@ -42,7 +43,7 @@ export function chooseBestReconciliationSnapshot(rows=[]){
 async function activeCandidates(client,record,businessUnitId){
   const attempts=[];
   if(record.externalId)attempts.push({sql:`r.source_uid=$2`,params:[businessUnitId,record.externalId]});
-  if(record.sourceReportNumber)attempts.push({sql:`r.source_report_number=$2 AND r.report_date=$3::date`,params:[businessUnitId,record.sourceReportNumber,record.reportDate],uniqueOnly:true});
+  if(shouldMatchBySourceReportNumber(record))attempts.push({sql:`r.source_report_number=$2 AND r.report_date=$3::date`,params:[businessUnitId,record.sourceReportNumber,record.reportDate],uniqueOnly:true});
   if(record.recordFingerprint)attempts.push({sql:`r.record_fingerprint=$2`,params:[businessUnitId,record.recordFingerprint]});
   if(record.contentFingerprint)attempts.push({sql:`r.content_fingerprint=$2`,params:[businessUnitId,record.contentFingerprint],uniqueOnly:true});
   for(const attempt of attempts){
@@ -72,7 +73,7 @@ export async function findActiveRacMatch(client,record,businessUnitId){
 export async function findReconciliationMemory(client,record,businessUnitId){
   const attempts=[];
   if(record.externalId)attempts.push({sql:`source_uid=$2`,params:[businessUnitId,record.externalId]});
-  if(record.sourceReportNumber)attempts.push({sql:`source_report_number=$2 AND report_date=$3::date`,params:[businessUnitId,record.sourceReportNumber,record.reportDate],uniqueOnly:true});
+  if(shouldMatchBySourceReportNumber(record))attempts.push({sql:`source_report_number=$2 AND report_date=$3::date`,params:[businessUnitId,record.sourceReportNumber,record.reportDate],uniqueOnly:true});
   if(record.recordFingerprint)attempts.push({sql:`record_fingerprint=$2`,params:[businessUnitId,record.recordFingerprint]});
   if(record.contentFingerprint)attempts.push({sql:`content_fingerprint=$2`,params:[businessUnitId,record.contentFingerprint],uniqueOnly:true});
   for(const attempt of attempts){

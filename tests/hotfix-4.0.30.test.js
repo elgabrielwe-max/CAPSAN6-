@@ -15,7 +15,7 @@ test('restauración de evidencias tipa cada parámetro una sola vez',()=>{
   }
 });
 
-test('versión del paquete corresponde al hotfix 4.0.30',()=>{
+test('versión del paquete corresponde al hotfix 4.0.31',()=>{
   const pkg=JSON.parse(fs.readFileSync(new URL('../package.json',import.meta.url),'utf8'));
-  assert.equal(pkg.version,'4.0.30');
+  assert.equal(pkg.version,'4.0.31');
 });
