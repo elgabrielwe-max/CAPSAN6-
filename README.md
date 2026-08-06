@@ -273,3 +273,11 @@ Los cierres antiguos sin archivo y sin excepción permanecen como **Sin sustento
 - Alinea 33 columnas de destino con 33 expresiones SQL y 32 parámetros de entrada más el valor calculado de `lifted_at`.
 - Evita el error PostgreSQL `42601: INSERT has more expressions than target columns`.
 - La importación permanece transaccional: ante un error no se guardan filas parciales.
+
+
+## Hotfix 4.0.30 · Conciliación de evidencias
+
+- Corrige el conflicto de tipos PostgreSQL `42P08` durante la recuperación de evidencias después de reimportar RACS.
+- Los 13 parámetros de la evidencia se convierten explícitamente a tipos compatibles dentro de un CTE.
+- Conserva estado, evidencias, asignaciones, direccionamiento e historial recuperados desde la memoria de conciliación.
+- La operación continúa siendo transaccional y no guarda importaciones parciales cuando ocurre un error.
