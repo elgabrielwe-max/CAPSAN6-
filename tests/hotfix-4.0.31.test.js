@@ -26,5 +26,5 @@ test('la verificación final cuenta RACS únicos afectados y reporta filas conso
 
 test('la compatibilidad del hotfix 4.0.31 se conserva en la versión actual',()=>{
   const pkg=JSON.parse(fs.readFileSync(new URL('../package.json',import.meta.url),'utf8'));
-  assert.equal(pkg.version,'4.0.34');
+  assert.equal(pkg.version,'4.0.35');
 });

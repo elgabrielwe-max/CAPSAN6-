@@ -15,7 +15,7 @@ import { audit, notify } from '../services/audit.js';
 import { unitScope, parseFilters } from '../scope.js';
 import { config } from '../config.js';
 import { dueDateForRisk } from '../services/racDeadlines.js';
-import { buildRacFingerprints, findActiveRacMatch, findReconciliationMemory, rememberRacsBeforePurge, restoreReconciliationMemory, allocateUniqueRacReportCode, recoverHistoricalEvidence } from '../services/racReconciliation.js';
+import { buildRacFingerprints, findActiveRacMatch, findReconciliationMemory, rememberRacsBeforePurge, restoreReconciliationMemory, allocateUniqueRacReportCode, recoverHistoricalEvidence, listHistoricalEvidenceRecords } from '../services/racReconciliation.js';
 
 const upload=multer({storage:multer.memoryStorage(),limits:{fileSize:25*1024*1024}});
 export const racsRouter=Router();
@@ -193,6 +193,17 @@ racsRouter.post('/cause-categories',requireCapability('rac:catalog.manage'),asyn
   await audit(req,'CREATE_RAC_CAUSE_CATEGORY','RAC_CAUSE_CATEGORY',category.id,{code:category.code,name:category.name,reportType:category.reportType});
   res.status(201).json(category);
 });
+
+
+racsRouter.get('/reconciliation/evidence-history',requireCapability('rac:direct'),asyncRoute(async(req,res)=>{
+  const requestedUnit=Number(req.query.businessUnitId||0);
+  if(requestedUnit&&!assertUnitAccess(req.user,requestedUnit))return res.status(403).json({error:'Unidad fuera de tu alcance'});
+  const businessUnitIds=requestedUnit?[requestedUnit]:(req.user.role==='MASTER'?null:req.user.unitIds||[]);
+  const result=await listHistoricalEvidenceRecords(pool,{
+    businessUnitIds,from:req.query.from||null,to:req.query.to||null,status:req.query.status||'ALL',search:req.query.search||'',limit:req.query.limit||500
+  });
+  res.json(result);
+}));
 
 racsRouter.post('/reconciliation/evidence-recovery/preview',requireCapability('rac:direct'),asyncRoute(async(req,res)=>{
   const requestedUnit=Number(req.body.businessUnitId||0);

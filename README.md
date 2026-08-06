@@ -1,7 +1,16 @@
-# CAPSAN6 4.0.34 · Sistema Integral de Gestión SSOMA
+# CAPSAN6 4.0.35 · Sistema Integral de Gestión SSOMA
 
 
 
+
+## Actualización 4.0.35 · Apartado de evidencias históricas RACS
+
+- Nueva pestaña **Evidencias históricas** exclusiva para Máster y SSOMA.
+- Muestra todas las evidencias guardadas en la memoria de conciliación, no solo una muestra resumida.
+- Clasifica cada archivo como ya presente, por insertar, por reasignar, ambiguo, sin coincidencia o con conflicto.
+- Incluye filtros por unidad, fechas, situación y búsqueda por código, número de origen, descripción, reportante, lugar o archivo.
+- Permite abrir fotografías, PDF y otros archivos cuando continúan disponibles en el volumen o mediante su enlace.
+- Conserva el botón de recuperación segura y actualiza el listado después de ejecutarlo.
 
 ## Corrección 4.0.34 · Descripción visible y recuperación histórica de evidencias
 

@@ -323,6 +323,119 @@ export async function recoverHistoricalEvidence(client,{businessUnitIds=null,fro
   return result;
 }
 
+
+
+export async function listHistoricalEvidenceRecords(client,{businessUnitIds=null,from=null,to=null,status='ALL',search='',limit=500}={}){
+  const empty={summary:{memoryRecords:0,secureMatches:0,evidenceFiles:0,insertable:0,reassignable:0,alreadyPresent:0,ambiguous:0,unmatched:0,conflicts:0,filesAvailable:0,filesMissing:0},total:0,rows:[]};
+  if(Array.isArray(businessUnitIds)&&businessUnitIds.length===0)return empty;
+  const params=[];
+  const clauses=[`jsonb_array_length(COALESCE(m.evidence_snapshot,'[]'::jsonb))>0`];
+  if(Array.isArray(businessUnitIds)&&businessUnitIds.length){params.push(businessUnitIds.map(Number));clauses.push(`m.business_unit_id=ANY($${params.length}::int[])`);}
+  if(from){params.push(from);clauses.push(`m.report_date>=$${params.length}::date`);}
+  if(to){params.push(to);clauses.push(`m.report_date<=$${params.length}::date`);}
+  const memoryRows=(await client.query(`
+    SELECT m.*,bu.name business_unit_name
+    FROM rac_reconciliation_memory m
+    LEFT JOIN business_units bu ON bu.id=m.business_unit_id
+    WHERE ${clauses.join(' AND ')}
+    ORDER BY m.report_date DESC,m.id DESC
+  `,params)).rows;
+  if(!memoryRows.length)return empty;
+
+  const unitIds=[...new Set(memoryRows.map(row=>Number(row.business_unit_id)).filter(Boolean))];
+  const active=(await client.query(`
+    SELECT r.*,bu.name business_unit_name,ar.name reporting_area_name,ad.name reported_area_name
+    FROM racs r
+    LEFT JOIN business_units bu ON bu.id=r.business_unit_id
+    LEFT JOIN areas ar ON ar.id=r.reporting_area_id
+    LEFT JOIN areas ad ON ad.id=r.reported_area_id
+    WHERE r.business_unit_id=ANY($1::int[])
+    ORDER BY r.business_unit_id,r.report_date,r.id
+  `,[unitIds])).rows;
+  const byUnit=new Map();
+  for(const row of active){const id=Number(row.business_unit_id);if(!byUnit.has(id))byUnit.set(id,[]);byUnit.get(id).push(row);}
+
+  const storedNames=[...new Set(memoryRows.flatMap(row=>evidenceRows(row).map(item=>clean(item.stored_name)).filter(Boolean)))];
+  const existingRows=storedNames.length?(await client.query(`
+    SELECT e.id,e.rac_id,e.evidence_type,e.comment,e.original_name,e.stored_name,e.mime_type,e.size_bytes,e.drive_web_link,e.uploaded_at,
+      r.report_code,r.business_unit_id,r.source_uid,r.source_report_number,r.report_date,r.reporter_name,r.location,r.description,
+      bu.name business_unit_name,ar.name reporting_area_name,ad.name reported_area_name
+    FROM rac_evidence e
+    JOIN racs r ON r.id=e.rac_id
+    LEFT JOIN business_units bu ON bu.id=r.business_unit_id
+    LEFT JOIN areas ar ON ar.id=r.reporting_area_id
+    LEFT JOIN areas ad ON ad.id=r.reported_area_id
+    WHERE e.stored_name=ANY($1::text[])
+    ORDER BY e.stored_name,e.id DESC
+  `,[storedNames])).rows:[];
+  const assets=storedNames.length?(await client.query(`
+    SELECT DISTINCT ON (stored_name) id,stored_name,original_name,mime_type,size_bytes,drive_web_link,drive_status,business_unit_id,created_at
+    FROM file_assets
+    WHERE stored_name=ANY($1::text[])
+    ORDER BY stored_name,id DESC
+  `,[storedNames])).rows:[];
+  const existingByStored=new Map();
+  for(const row of existingRows){if(!existingByStored.has(row.stored_name))existingByStored.set(row.stored_name,[]);existingByStored.get(row.stored_name).push(row);}
+  const assetByStored=new Map(assets.map(row=>[row.stored_name,row]));
+
+  const rows=[];
+  const matchedMemoryIds=new Set();
+  for(const memoryRow of memoryRows){
+    const snapshot=memorySnapshot(memoryRow);
+    const selection=selectHistoricalEvidenceTarget(memoryRow,byUnit.get(Number(memoryRow.business_unit_id))||[]);
+    if(selection.target)matchedMemoryIds.add(Number(memoryRow.id));
+    const uniqueEvidence=new Map();
+    for(const evidence of evidenceRows(memoryRow)){const key=evidenceIdentityKey(evidence);if(!uniqueEvidence.has(key))uniqueEvidence.set(key,evidence);}
+    for(const evidence of uniqueEvidence.values()){
+      const storedName=clean(evidence.stored_name);
+      const linked=existingByStored.get(storedName)||[];
+      const asset=assetByStored.get(storedName)||null;
+      let evidenceStatus='UNMATCHED';
+      let current=null;
+      if(!selection.target){
+        evidenceStatus=selection.confidence==='AMBIGUOUS'?'AMBIGUOUS':'UNMATCHED';
+      }else if(linked.some(item=>Number(item.rac_id)===Number(selection.target.id))){
+        evidenceStatus='ALREADY_PRESENT';
+        current=linked.find(item=>Number(item.rac_id)===Number(selection.target.id));
+      }else if(linked.length){
+        const ranked=[...linked].map(item=>({item,score:evidenceMatchDetails(memoryRow,item).score})).sort((a,b)=>b.score-a.score||Number(b.item.id)-Number(a.item.id));
+        current=ranked[0]?.item||null;
+        const targetScore=evidenceMatchDetails(memoryRow,selection.target).score;
+        evidenceStatus=targetScore>Number(ranked[0]?.score||0)?'REASSIGNABLE':'CONFLICT';
+      }else{
+        evidenceStatus='INSERTABLE';
+      }
+      rows.push({
+        memoryId:Number(memoryRow.id),oldRacId:Number(memoryRow.old_rac_id),oldReportCode:snapshot.report_code||null,
+        sourceReportNumber:memoryRow.source_report_number||snapshot.source_report_number||null,businessUnitId:Number(memoryRow.business_unit_id),businessUnit:memoryRow.business_unit_name||snapshot.business_unit||snapshot.business_unit_name||'SIN UNIDAD',
+        reportDate:dateOnly(memoryRow.report_date||snapshot.report_date),reporterName:snapshot.reporter_name||null,location:snapshot.location||null,
+        description:snapshot.description||null,oldStatus:snapshot.status||null,oldProgress:Number(snapshot.progress_percent||0),
+        evidenceType:evidence.evidence_type||'SEGUIMIENTO',comment:evidence.comment||null,originalName:evidence.original_name||asset?.original_name||storedName,
+        storedName,mimeType:evidence.mime_type||asset?.mime_type||null,sizeBytes:Number(evidence.size_bytes||asset?.size_bytes||0),uploadedAt:evidence.uploaded_at||asset?.created_at||null,
+        assetId:asset?Number(asset.id):null,driveWebLink:evidence.drive_web_link||asset?.drive_web_link||null,fileAvailable:Boolean(asset||evidence.drive_web_link),
+        status:evidenceStatus,matchMethod:selection.method||null,confidence:selection.confidence||null,score:Number(selection.score||0),
+        targetRacId:selection.target?Number(selection.target.id):null,targetCode:selection.target?.report_code||null,targetDescription:selection.target?.description||null,
+        currentRacId:current?Number(current.rac_id):null,currentCode:current?.report_code||null,candidates:selection.candidates||[]
+      });
+    }
+  }
+
+  const summary={
+    memoryRecords:memoryRows.length,secureMatches:matchedMemoryIds.size,evidenceFiles:rows.length,
+    insertable:rows.filter(row=>row.status==='INSERTABLE').length,reassignable:rows.filter(row=>row.status==='REASSIGNABLE').length,
+    alreadyPresent:rows.filter(row=>row.status==='ALREADY_PRESENT').length,ambiguous:rows.filter(row=>row.status==='AMBIGUOUS').length,
+    unmatched:rows.filter(row=>row.status==='UNMATCHED').length,conflicts:rows.filter(row=>row.status==='CONFLICT').length,
+    filesAvailable:rows.filter(row=>row.fileAvailable).length,filesMissing:rows.filter(row=>!row.fileAvailable).length
+  };
+  const wanted=String(status||'ALL').toUpperCase();
+  const needle=normalizeRacIdentity(search);
+  const filtered=rows.filter(row=>(wanted==='ALL'||row.status===wanted)&&(!needle||normalizeRacIdentity([
+    row.oldReportCode,row.sourceReportNumber,row.businessUnit,row.reporterName,row.location,row.description,row.originalName,row.targetCode,row.currentCode
+  ].join(' ')).includes(needle)));
+  const max=Math.min(Math.max(Number(limit)||500,1),2000);
+  return{summary,total:filtered.length,rows:filtered.slice(0,max)};
+}
+
 export async function findReconciliationMemory(client,record,businessUnitId){
   const base=`SELECT * FROM rac_reconciliation_memory WHERE restored_at IS NULL AND business_unit_id=$1`;
   if(record.externalId){

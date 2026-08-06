@@ -11,6 +11,6 @@ async function start(){
   await connectWithRetry();
   await initSchema();
   await ensureStorage();
-  app.listen(config.port,()=>console.log(`CAPSAN6 4.0.34 ejecutándose en puerto ${config.port}`));
+  app.listen(config.port,()=>console.log(`CAPSAN6 4.0.35 ejecutándose en puerto ${config.port}`));
 }
 start().catch(error=>{console.error('No se pudo iniciar CAPSAN6:',error);process.exit(1);});

@@ -53,5 +53,5 @@ test('recuperación está restringida a Máster y SSOMA mediante rac direct',()=
 
 test('versión corresponde a CAPSAN6 4.0.34',()=>{
   const pkg=JSON.parse(fs.readFileSync(new URL('../package.json',import.meta.url),'utf8'));
-  assert.equal(pkg.version,'4.0.34');
+  assert.equal(pkg.version,'4.0.35');
 });

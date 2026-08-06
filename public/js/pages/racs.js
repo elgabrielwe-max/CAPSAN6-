@@ -53,7 +53,7 @@ export async function racDashboardPage(root){root.innerHTML=`<div class="page-he
 
 export async function racOperationsPage(root){
   let currentTab='import';
-  const directionTab=can('rac:direct')?'<button data-tab="directed">Listado direccionado</button>':'';
+  const directionTab=can('rac:direct')?'<button data-tab="directed">Listado direccionado</button><button data-tab="historical-evidence">Evidencias históricas</button>':'';
   root.innerHTML=`<div class="page-head"><div><h2>Registro y levantamiento de RACS</h2><p>Importación inteligente, registro, direccionamiento y seguimiento en una sola operación.</p></div></div><div class="tabs"><button data-tab="import" class="active">Importar Excel</button><button data-tab="new">Registrar nuevo RAC</button><button data-tab="follow">Listado para levantamiento</button>${directionTab}<button data-tab="changes">Listado de cambios</button></div><div id="racOps"></div>`;
   document.querySelectorAll('[data-tab]').forEach(button=>button.onclick=()=>{
     currentTab=button.dataset.tab;
@@ -65,6 +65,7 @@ export async function racOperationsPage(root){
     if(currentTab==='new')return newTab();
     if(currentTab==='follow')return followTab();
     if(currentTab==='directed'&&can('rac:direct'))return directedTab();
+    if(currentTab==='historical-evidence'&&can('rac:direct'))return historicalEvidenceTab();
     return changesTab();
   }
   async function importTab(){
@@ -181,7 +182,8 @@ async function directedTab(){
   const recoveryPayload=()=>({businessUnitId:$('#directUnit').value||null,from:$('#directFrom').value||null,to:$('#directTo').value||null});
   const renderRecovery=(result,executed=false)=>{
     const recoverable=Number(result.inserted||0)+Number(result.moved||0);
-    $('#evidenceRecoveryResult').innerHTML=`<div class="alert ${recoverable?'warn':'ok'}"><b>${executed?'Recuperación ejecutada':'Revisión terminada'}.</b> Memorias con evidencia: ${Number(result.memoryRecords||0)} · Coincidencias seguras: ${Number(result.matchedRecords||0)} · ${executed?'Evidencias insertadas':'Por insertar'}: ${Number(result.inserted||0)} · ${executed?'Evidencias reasignadas':'Por reasignar'}: ${Number(result.moved||0)} · Ya presentes: ${Number(result.alreadyPresent||0)} · Ambiguas: ${Number(result.ambiguous||0)} · Sin coincidencia: ${Number(result.unmatched||0)}${!executed&&recoverable?`<div class="actions compact"><button class="btn primary" id="executeEvidenceRecovery">Recuperar ${recoverable} evidencia${recoverable===1?'':'s'}</button></div>`:''}</div>`;
+    $('#evidenceRecoveryResult').innerHTML=`<div class="alert ${recoverable?'warn':'ok'}"><b>${executed?'Recuperación ejecutada':'Revisión terminada'}.</b> Memorias con evidencia: ${Number(result.memoryRecords||0)} · Coincidencias seguras: ${Number(result.matchedRecords||0)} · ${executed?'Evidencias insertadas':'Por insertar'}: ${Number(result.inserted||0)} · ${executed?'Evidencias reasignadas':'Por reasignar'}: ${Number(result.moved||0)} · Ya presentes: ${Number(result.alreadyPresent||0)} · Ambiguas: ${Number(result.ambiguous||0)} · Sin coincidencia: ${Number(result.unmatched||0)}<div class="actions compact">${!executed&&recoverable?`<button class="btn primary" id="executeEvidenceRecovery">Recuperar ${recoverable} evidencia${recoverable===1?'':'s'}</button>`:''}<button class="btn ghost" id="openHistoricalEvidenceSection">Ver apartado de evidencias</button></div></div>`;
+    $('#openHistoricalEvidenceSection').onclick=()=>document.querySelector('[data-tab="historical-evidence"]')?.click();
     if(!executed&&recoverable)$('#executeEvidenceRecovery').onclick=async()=>{
       if(!window.confirm(`Se insertarán o reasignarán ${recoverable} evidencias mediante coincidencias seguras. ¿Continuar?`))return;
       try{const done=await api('/api/racs/reconciliation/evidence-recovery/execute',{method:'POST',body:recoveryPayload()});renderRecovery(done,true);toast(`Recuperación completada: ${Number(done.inserted||0)+Number(done.moved||0)} evidencias`);await load();}catch(error){toast(error.message,'error');}
@@ -204,6 +206,65 @@ async function directedTab(){
   $('#previewEvidenceRecovery').onclick=async()=>{try{$('#evidenceRecoveryResult').innerHTML='<div class="page-loading"><span class="spinner"></span>Comparando evidencias históricas…</div>';const preview=await api('/api/racs/reconciliation/evidence-recovery/preview',{method:'POST',body:recoveryPayload()});renderRecovery(preview,false);}catch(error){$('#evidenceRecoveryResult').innerHTML=errorBox(error);}};
   $('#loadDirected').onclick=load;
   $('#directSearch').onkeydown=event=>{if(event.key==='Enter'){event.preventDefault();load();}};
+  await load();
+}
+
+
+async function historicalEvidenceTab(){
+  const box=$('#racOps');
+  const statusOptions=[
+    ['ALL','Todas'],['REASSIGNABLE','Por reasignar'],['INSERTABLE','Por insertar'],['ALREADY_PRESENT','Ya presentes'],
+    ['UNMATCHED','Sin coincidencia'],['AMBIGUOUS','Ambiguas'],['CONFLICT','Con conflicto']
+  ];
+  const statusMeta={
+    REASSIGNABLE:{label:'POR REASIGNAR',className:'pending',detail:'La evidencia está vinculada a otro código, pero existe una coincidencia más segura.'},
+    INSERTABLE:{label:'POR INSERTAR',className:'pending',detail:'El archivo existe en la memoria y tiene un RAC destino seguro.'},
+    ALREADY_PRESENT:{label:'YA PRESENTE',className:'done',detail:'La evidencia ya está asociada al RAC correcto.'},
+    UNMATCHED:{label:'SIN COINCIDENCIA',className:'high',detail:'No se encontró un RAC actual suficientemente parecido.'},
+    AMBIGUOUS:{label:'AMBIGUA',className:'medium',detail:'Existen varios RACS posibles y no es seguro elegir uno automáticamente.'},
+    CONFLICT:{label:'CONFLICTO',className:'high',detail:'La evidencia ya está asociada y la coincidencia actual no es mejor que la existente.'}
+  };
+  box.innerHTML=`<section class="panel historical-evidence-panel"><div class="change-list-head"><div><h3>Evidencias históricas de RACS</h3><div class="panel-sub">Consulta todas las evidencias guardadas antes de la depuración: recuperadas, por reasignar, ya presentes y aquellas que todavía no tienen coincidencia.</div></div><span class="tag high">SOLO MÁSTER Y SSOMA</span></div><div class="filter-grid historical-evidence-filters"><div class="field"><label>Unidad</label><select id="historyEvidenceUnit">${unitOptions()}</select></div><div class="field"><label>Situación</label><select id="historyEvidenceStatus">${statusOptions.map(([value,label])=>`<option value="${value}">${label}</option>`).join('')}</select></div><div class="field"><label>Desde</label><input type="date" id="historyEvidenceFrom"></div><div class="field"><label>Hasta</label><input type="date" id="historyEvidenceTo"></div><div class="field span-2"><label>Buscar</label><input id="historyEvidenceSearch" placeholder="Código anterior, número, descripción, reportante, lugar o archivo"></div><div class="field"><label>&nbsp;</label><button class="btn primary" id="loadHistoricalEvidence">Actualizar evidencias</button></div></div><div class="actions historical-evidence-actions"><button class="btn amber" id="recoverHistoricalEvidence">Recuperar coincidencias seguras</button></div><div id="historicalEvidenceSummary"></div><div id="historicalEvidenceList"></div></section>`;
+  const payload=()=>({businessUnitId:$('#historyEvidenceUnit').value||null,from:$('#historyEvidenceFrom').value||null,to:$('#historyEvidenceTo').value||null});
+  async function load(){
+    const list=$('#historicalEvidenceList'),summaryBox=$('#historicalEvidenceSummary');
+    list.innerHTML='<div class="page-loading"><span class="spinner"></span>Cargando evidencias históricas…</div>';
+    const q=new URLSearchParams({limit:'1200',status:$('#historyEvidenceStatus').value});
+    if($('#historyEvidenceUnit').value)q.set('businessUnitId',$('#historyEvidenceUnit').value);
+    if($('#historyEvidenceFrom').value)q.set('from',$('#historyEvidenceFrom').value);
+    if($('#historyEvidenceTo').value)q.set('to',$('#historyEvidenceTo').value);
+    if($('#historyEvidenceSearch').value.trim())q.set('search',$('#historyEvidenceSearch').value.trim());
+    try{
+      const result=await api(`/api/racs/reconciliation/evidence-history?${q}`);
+      const s=result.summary||{};
+      summaryBox.innerHTML=`<div class="historical-evidence-kpis"><div><span>Memorias con evidencia</span><b>${Number(s.memoryRecords||0)}</b></div><div><span>Coincidencias seguras</span><b>${Number(s.secureMatches||0)}</b></div><div><span>Archivos históricos</span><b>${Number(s.evidenceFiles||0)}</b></div><div class="success"><span>Ya presentes</span><b>${Number(s.alreadyPresent||0)}</b></div><div class="warning"><span>Por recuperar</span><b>${Number(s.insertable||0)+Number(s.reassignable||0)}</b></div><div class="danger"><span>Sin coincidencia</span><b>${Number(s.unmatched||0)+Number(s.ambiguous||0)}</b></div></div><div class="historical-evidence-caption">Mostrando ${Number(result.total||0)} evidencia${Number(result.total||0)===1?'':'s'} según los filtros. Archivos disponibles: ${Number(s.filesAvailable||0)} · No disponibles en el volumen: ${Number(s.filesMissing||0)}.</div>`;
+      const evidenceMap=new Map();
+      const grouped=new Map();
+      (result.rows||[]).forEach((row,index)=>{
+        const viewId=index+1;row.viewId=viewId;
+        evidenceMap.set(viewId,{id:viewId,asset_id:row.assetId,drive_web_link:row.driveWebLink,mime_type:row.mimeType,original_name:row.originalName,evidence_type:row.evidenceType,uploaded_at:row.uploadedAt,comment:row.comment,rac_code:row.targetCode||row.oldReportCode||'RAC HISTÓRICO'});
+        if(!grouped.has(row.memoryId))grouped.set(row.memoryId,[]);grouped.get(row.memoryId).push(row);
+      });
+      list.innerHTML=grouped.size?`<div class="historical-evidence-list">${[...grouped.values()].map(items=>{
+        const head=items[0],statuses=[...new Set(items.map(item=>item.status))];
+        return `<article class="historical-evidence-card"><header><div><b>${escapeHtml(head.oldReportCode||`RAC ANTERIOR ${head.oldRacId}`)}</b><small>N.° origen: ${escapeHtml(head.sourceReportNumber||'SIN NÚMERO')} · ${escapeHtml(head.businessUnit||'')} · ${escapeHtml(head.reportDate||'SIN FECHA')}</small></div><div class="historical-evidence-statuses">${statuses.map(value=>`<span class="tag ${statusMeta[value]?.className||''}">${statusMeta[value]?.label||escapeHtml(value)}</span>`).join('')}</div></header><div class="historical-evidence-origin"><div><small>Reportante</small><b>${escapeHtml(head.reporterName||'SIN REPORTANTE')}</b></div><div><small>Lugar</small><b>${escapeHtml(head.location||'SIN LUGAR')}</b></div><div><small>Estado anterior</small><b>${escapeHtml(head.oldStatus||'—')} · ${Number(head.oldProgress||0)}%</b></div></div><div class="historical-evidence-description"><small>Descripción del RAC anterior</small><p>${escapeHtml(head.description||'SIN DESCRIPCIÓN')}</p></div><div class="historical-evidence-files">${items.map(item=>{
+          const meta=statusMeta[item.status]||{label:item.status,className:'',detail:''};
+          const mime=String(item.mimeType||'').toLowerCase(),isImage=mime.startsWith('image/'),fileLabel=mime.includes('pdf')?'PDF':isImage?'IMG':'FILE';
+          const destination=item.targetCode?`RAC destino: <b>${escapeHtml(item.targetCode)}</b>`:'Sin RAC destino seguro';
+          const current=item.currentCode&&item.currentCode!==item.targetCode?` · Vinculada actualmente a <b>${escapeHtml(item.currentCode)}</b>`:'';
+          return `<div class="historical-evidence-file"><button type="button" class="historical-evidence-preview ${item.fileAvailable?'':'missing'}" ${item.fileAvailable?`data-open-evidence="${item.viewId}"`:'disabled'}><div class="evidence-visual">${isImage&&item.assetId?`<img data-evidence-preview="${item.viewId}" alt="${escapeHtml(item.originalName||'Evidencia')}">`:''}<span class="evidence-file-icon">${fileLabel}</span></div><span>${item.fileAvailable?'Abrir evidencia':'Archivo no disponible'}</span></button><div class="historical-evidence-file-info"><div><span class="tag ${meta.className}">${meta.label}</span><b>${escapeHtml(item.originalName||item.storedName||'EVIDENCIA')}</b></div><small>${escapeHtml(item.evidenceType||'SEGUIMIENTO')} · ${formatDateTime(item.uploadedAt)}</small>${item.comment?`<p>${escapeHtml(item.comment)}</p>`:''}<p class="historical-evidence-match">${destination}${current}<br><span>${escapeHtml(meta.detail)}${item.matchMethod?` Método: ${escapeHtml(item.matchMethod)}.`:''}${item.candidates?.length?` Posibles: ${item.candidates.map(escapeHtml).join(', ')}.`:''}</span></p></div></div>`;
+        }).join('')}</div></article>`;
+      }).join('')}</div>`:'<div class="empty">No existen evidencias históricas para los filtros seleccionados.</div>';
+      await hydrateEvidenceThumbnails(list,evidenceMap);
+    }catch(error){summaryBox.innerHTML='';list.innerHTML=errorBox(error);}
+  }
+  $('#recoverHistoricalEvidence').onclick=async()=>{
+    if(!window.confirm('Se recuperarán únicamente las evidencias con coincidencia segura. Las ambiguas y sin coincidencia permanecerán sin cambios. ¿Continuar?'))return;
+    const button=$('#recoverHistoricalEvidence');button.disabled=true;button.textContent='Recuperando evidencias…';
+    try{const done=await api('/api/racs/reconciliation/evidence-recovery/execute',{method:'POST',body:payload()});toast(`Recuperación completada: ${Number(done.inserted||0)+Number(done.moved||0)} evidencias`);await load();}catch(error){toast(error.message,'error');}finally{button.disabled=false;button.textContent='Recuperar coincidencias seguras';}
+  };
+  $('#loadHistoricalEvidence').onclick=load;
+  $('#historyEvidenceSearch').onkeydown=event=>{if(event.key==='Enter'){event.preventDefault();load();}};
   await load();
 }
 
