@@ -92,19 +92,20 @@ export async function racOperationsPage(root){
       const preview=a.reconciliationPreview||{};
       const reconciliationPreview=`<div class="kpi-grid compact"><div class="kpi-card"><span>Nuevos</span><strong>${preview.willInsert||0}</strong><small>Se insertarán</small></div><div class="kpi-card"><span>Actualizaciones</span><strong>${preview.willUpdate||0}</strong><small>Coinciden con RACS activos</small></div><div class="kpi-card"><span>Recuperados</span><strong>${preview.willRestore||0}</strong><small>Desde depuración protegida</small></div><div class="kpi-card"><span>Estados preservados</span><strong>${preview.preservedStates||0}</strong><small>No retrocederán por el Excel</small></div></div>`;
       const periodControl=(a.periods||[]).length>1?`<div class="panel import-period-choice"><h4>El archivo contiene varios periodos</h4><div class="form-grid two"><div class="field"><label>Modo de importación</label><select id="importPeriodMode"><option value="ALL">Importar todos los periodos</option><option value="DOMINANT">Importar solo el mes dominante (${escapeHtml(a.dominantPeriod)})</option><option value="PERIOD">Importar un periodo específico</option></select></div><div class="field"><label>Periodo específico</label><select id="importSelectedPeriod" disabled>${periodOptions}</select></div></div></div>`:'';
-      $('#importResult').innerHTML=`<div class="alert ok">${a.validRows} RACS válidos · ${a.stableIds||0} con ID único estable · ${a.missingStableIds||0} sin ID único · Periodo dominante ${escapeHtml(a.dominantPeriod||'sin fecha')}.</div>${reconciliationPreview}${warnings}${errors}${periodControl}<div class="actions"><button class="btn amber" id="commitImport">Confirmar e importar ${a.validRows} RACS a la base central</button></div><div id="commitImportStatus"></div>${table(['Código interno','ID único','N° origen','Fecha','Área','Lugar','Riesgo','Causa','Estado'],(a.records||[]).map(r=>`<tr><td>${escapeHtml(r.internalCode)}</td><td>${escapeHtml(r.externalId||'SIN ID')}</td><td>${escapeHtml(r.sourceReportNumber)}</td><td>${r.reportDate}</td><td>${escapeHtml(r.reportingArea)}</td><td>${escapeHtml(r.location)}</td><td>${escapeHtml(r.riskLevel)}</td><td>${escapeHtml(r.causeSubtype)}</td><td>${escapeHtml(r.status)}</td></tr>`))}`;
+      $('#importResult').innerHTML=`<div class="alert ok">${a.validRows} RACS válidos · ${a.stableIds||0} con ID único estable · ${a.missingStableIds||0} sin ID único · Periodo dominante ${escapeHtml(a.dominantPeriod||'sin fecha')}.</div><div class="alert ok"><b>Excel conservado temporalmente.</b> Al confirmar, CAPSAN6 reutilizará el archivo ya analizado y no volverá a subirlo. La copia temporal vence a las ${a.uploadExpiresAt?new Date(a.uploadExpiresAt).toLocaleTimeString('es-PE',{hour:'2-digit',minute:'2-digit'}):'próximas 2 horas'}.</div>${reconciliationPreview}${warnings}${errors}${periodControl}<div class="actions"><button class="btn amber" id="commitImport">Confirmar e importar ${a.validRows} RACS a la base central</button></div><div id="commitImportStatus"></div>${table(['Código interno','ID único','N° origen','Fecha','Área','Lugar','Riesgo','Causa','Estado'],(a.records||[]).map(r=>`<tr><td>${escapeHtml(r.internalCode)}</td><td>${escapeHtml(r.externalId||'SIN ID')}</td><td>${escapeHtml(r.sourceReportNumber)}</td><td>${r.reportDate}</td><td>${escapeHtml(r.reportingArea)}</td><td>${escapeHtml(r.location)}</td><td>${escapeHtml(r.riskLevel)}</td><td>${escapeHtml(r.causeSubtype)}</td><td>${escapeHtml(r.status)}</td></tr>`))}`;
       if($('#importPeriodMode'))$('#importPeriodMode').onchange=()=>{$('#importSelectedPeriod').disabled=$('#importPeriodMode').value!=='PERIOD';};
       const commitButton=$('#commitImport');
       commitButton.onclick=async()=>{
         commitButton.disabled=true;
         commitButton.textContent='Importando y verificando PostgreSQL…';
-        const fd2=new FormData();
-        fd2.append('file',selectedFile);
-        fd2.append('businessUnitId',selectedUnitId);
-        fd2.append('periodMode',$('#importPeriodMode')?.value||'ALL');
-        if($('#importSelectedPeriod'))fd2.append('selectedPeriod',$('#importSelectedPeriod').value);
+        const importPayload={
+          uploadToken:a.uploadToken,
+          businessUnitId:selectedUnitId,
+          periodMode:$('#importPeriodMode')?.value||'ALL',
+          selectedPeriod:$('#importSelectedPeriod')?.value||''
+        };
         try{
-          const r=await api('/api/racs/import',{method:'POST',body:fd2});
+          const r=await api('/api/racs/import',{method:'POST',body:importPayload});
           $('#commitImportStatus').innerHTML=`<div class="alert ok"><b>Importación confirmada en la base central.</b><br>${r.inserted} nuevos · ${r.updated} actualizados · ${r.reconciled||0} recuperados desde depuración · ${r.restoredEvidence||0} evidencias restauradas · ${r.duplicatesMerged||0} duplicados históricos fusionados · ${r.preservedOperational||0} estados actuales preservados · ${r.verified} verificados en PostgreSQL.</div><div class="actions"><button class="btn primary" id="openCentralDashboard">Abrir Dashboard RACS</button><button class="btn ghost" id="openCentralList">Abrir listado para levantamiento</button></div>`;
           commitButton.textContent='Importación completada';
           toast(`${r.verified} RACS verificados en la base central`);

@@ -1,6 +1,27 @@
 export const session={token:localStorage.getItem('capsan_token')||'',user:null};
 export function setToken(token){session.token=token||'';token?localStorage.setItem('capsan_token',token):localStorage.removeItem('capsan_token');}
-export async function api(url,options={}){const headers={...(options.headers||{})};if(session.token)headers.authorization=`Bearer ${session.token}`;if(options.body&&!(options.body instanceof FormData)&&typeof options.body!=='string'){headers['content-type']='application/json';options.body=JSON.stringify(options.body);}const response=await fetch(url,{...options,headers});const type=response.headers.get('content-type')||'';const data=type.includes('application/json')?await response.json():await response.text();if(!response.ok)throw new Error(data?.error||data||`Error ${response.status}`);return data;}
+export async function api(url,options={}){
+  const headers={...(options.headers||{})};
+  if(session.token)headers.authorization=`Bearer ${session.token}`;
+  if(options.body&&!(options.body instanceof FormData)&&typeof options.body!=='string'){
+    headers['content-type']='application/json';
+    options.body=JSON.stringify(options.body);
+  }
+  let response;
+  try{
+    response=await fetch(url,{...options,headers});
+  }catch(error){
+    const isUpload=options.body instanceof FormData;
+    const message=isUpload
+      ?'La carga del archivo se interrumpió antes de terminar. Mantén esta pestaña abierta, verifica tu conexión y vuelve a intentarlo.'
+      :'Se perdió la conexión con CAPSAN6. Verifica tu internet y vuelve a intentarlo.';
+    throw new Error(message,{cause:error});
+  }
+  const type=response.headers.get('content-type')||'';
+  const data=type.includes('application/json')?await response.json():await response.text();
+  if(!response.ok)throw new Error(data?.error||data||`Error ${response.status}`);
+  return data;
+}
 async function fileResponse(url){const response=await fetch(url,{headers:session.token?{authorization:`Bearer ${session.token}`}:{}});if(!response.ok){let msg='No se pudo obtener el archivo';try{msg=(await response.json()).error||msg;}catch{}throw new Error(msg);}return response;}
 export async function download(url,fileName){const response=await fileResponse(url);const blob=await response.blob();const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=fileName;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);}
 export async function preview(url,fileName,mimeType=''){

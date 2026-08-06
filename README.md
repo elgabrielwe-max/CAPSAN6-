@@ -1,7 +1,16 @@
-# CAPSAN6 4.0.35 · Sistema Integral de Gestión SSOMA
+# CAPSAN6 4.0.36 · Sistema Integral de Gestión SSOMA
 
 
 
+
+## Corrección 4.0.36 · Cargas estables y Excel reutilizable
+
+- El Excel de RACS se carga una sola vez durante el análisis y queda protegido temporalmente durante dos horas.
+- Al confirmar la importación, CAPSAN6 reutiliza la copia ya analizada y evita una segunda subida por internet.
+- Si PostgreSQL rechaza la importación, la copia temporal se conserva para poder reintentar sin volver a seleccionar el archivo.
+- Las solicitudes multipart lentas disponen de hasta 15 minutos en Node.
+- Los cortes de conexión durante una carga se identifican como carga interrumpida y ya no se registran como fallas internas de PostgreSQL.
+- El navegador muestra un mensaje específico para mantener la pestaña abierta y volver a intentar.
 
 ## Actualización 4.0.35 · Apartado de evidencias históricas RACS
 

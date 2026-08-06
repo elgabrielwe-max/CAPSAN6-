@@ -14,7 +14,7 @@ test('4.0.27 crea el índice de direccionamiento después de agregar columnas',(
 });
 
 test('4.0.27 conserva su migración dentro de la versión actual',()=>{
-  assert.equal(pkg.version,'4.0.35');
+  assert.equal(pkg.version,'4.0.36');
   assert.match(schema,/VALUES\('4\.0\.27'\)/);
-  assert.match(index,/CAPSAN6 4\.0\.35 ejecutándose/);
+  assert.match(index,/CAPSAN6 4\.0\.36 ejecutándose/);
 });

@@ -16,6 +16,7 @@ import { unitScope, parseFilters } from '../scope.js';
 import { config } from '../config.js';
 import { dueDateForRisk } from '../services/racDeadlines.js';
 import { buildRacFingerprints, findActiveRacMatch, findReconciliationMemory, rememberRacsBeforePurge, restoreReconciliationMemory, allocateUniqueRacReportCode, recoverHistoricalEvidence, listHistoricalEvidenceRecords } from '../services/racReconciliation.js';
+import { cacheUploadedFile, loadCachedFile, removeCachedFile } from '../services/uploadCache.js';
 
 const upload=multer({storage:multer.memoryStorage(),limits:{fileSize:25*1024*1024}});
 export const racsRouter=Router();
@@ -252,6 +253,7 @@ racsRouter.post('/import/analyze',requireCapability('rac:import'),upload.single(
   if(!bu)return res.status(400).json({error:'Selecciona una unidad'});
   if(!assertUnitAccess(req.user,bu.id))return res.status(403).json({error:'Unidad fuera de tu alcance'});
   const analysis=analyzeRacWorkbook(req.file.buffer,req.file.originalname,{businessUnitName:bu.name,unitCode:bu.code});
+  const cachedUpload=await cacheUploadedFile(req.file,{userId:req.user.id,businessUnitId:bu.id,purpose:'RAC_IMPORT'});
   let willUpdate=0,willRestore=0,willInsert=0,preservedStates=0;
   for(const record of analysis.records){
     const existing=await findActiveRacMatch(pool,record,bu.id);
@@ -259,16 +261,18 @@ racsRouter.post('/import/analyze',requireCapability('rac:import'),upload.single(
     const memory=await findReconciliationMemory(pool,record,bu.id);
     if(memory.length)willRestore++;else willInsert++;
   }
-  res.json({...analysis,reconciliationPreview:{willUpdate,willRestore,willInsert,preservedStates},records:analysis.records.slice(0,50)});
+  res.json({...analysis,uploadToken:cachedUpload.token,uploadExpiresAt:cachedUpload.expiresAt,reconciliationPreview:{willUpdate,willRestore,willInsert,preservedStates},records:analysis.records.slice(0,50)});
 }));
 
 racsRouter.post('/import',requireCapability('rac:import'),upload.single('file'),asyncRoute(async(req,res)=>{
-  if(!req.file)return res.status(400).json({error:'Selecciona un Excel'});
   const bu=await unit(pool,req.body.businessUnitId);
   if(!bu)return res.status(400).json({error:'Selecciona una unidad'});
   if(!assertUnitAccess(req.user,bu.id))return res.status(403).json({error:'Unidad fuera de tu alcance'});
+  const uploadToken=clean(req.body.uploadToken);
+  const importFile=req.file||(uploadToken?await loadCachedFile(uploadToken,{userId:req.user.id,businessUnitId:bu.id,purpose:'RAC_IMPORT'}):null);
+  if(!importFile)return res.status(400).json({error:'Selecciona un Excel o vuelve a analizar el archivo'});
 
-  const analysis=analyzeRacWorkbook(req.file.buffer,req.file.originalname,{businessUnitName:bu.name,unitCode:bu.code});
+  const analysis=analyzeRacWorkbook(importFile.buffer,importFile.originalname,{businessUnitName:bu.name,unitCode:bu.code});
   if(!analysis.validRows)return res.status(400).json({error:'El archivo no contiene RACS válidos para importar',details:analysis.errors.slice(0,20)});
   const periodMode=upper(req.body.periodMode)||'ALL';
   const selectedPeriod=clean(req.body.selectedPeriod)||analysis.dominantPeriod;
@@ -292,7 +296,7 @@ racsRouter.post('/import',requireCapability('rac:import'),upload.single('file'),
       VALUES($1::text,$2::text,$3::int,$4::int,$4::int,$5::varchar(20),$6::int,$6::int,$7::int,$8::int,$8::int,'PROCESANDO',$9::jsonb)
       RETURNING id
     `,[
-      req.file.originalname,req.file.originalname,bu.id,req.user.id,detectedPeriod,
+      importFile.originalname,importFile.originalname,bu.id,req.user.id,detectedPeriod,
       analysis.totalRows,importRecords.length,analysis.errors.length,
       JSON.stringify({periods:analysis.periods,importedPeriods,periodMode,warnings:analysis.warnings})
     ])).rows[0];
@@ -461,7 +465,8 @@ racsRouter.post('/import',requireCapability('rac:import'),upload.single('file'),
   });
 
   await audit(req,'IMPORT_RACS','RAC_IMPORT',summary.batchId,summary);
-  res.json(summary);
+  if(uploadToken)await removeCachedFile(uploadToken).catch(()=>{});
+  res.json({...summary,usedCachedUpload:Boolean(uploadToken)});
 }));
 
 
