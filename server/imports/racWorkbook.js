@@ -160,7 +160,7 @@ export function analyzeRacWorkbook(buffer, fileName='archivo.xlsx', options={}) 
   const periodList=[...periods.entries()].sort((a,b)=>b[1]-a[1]).map(([period,total])=>({period,total}));
   if(periodList.length>1)warnings.push(`El archivo contiene varios periodos: ${periodList.map(x=>x.period).join(', ')}`);
   const repeated=[...sourceCounts.entries()].filter(([,n])=>n>1).reduce((s,[,n])=>s+n-1,0);
-  if(repeated)warnings.push(`${repeated} números de reporte están repetidos. Solo se consolidarán cuando fecha, reportante, áreas, lugar y descripción sean exactamente iguales; en caso contrario se conservarán como RACS independientes.`);
+  if(repeated)warnings.push(`${repeated} números de reporte repetidos se conservarán como RACS independientes, salvo cuando fecha, reportante, áreas, lugar y descripción sean exactamente iguales y correspondan a un duplicado real.`);
   const missingStableIds=records.filter(record=>!record.externalId).length;
   if(missingStableIds)warnings.push(`${missingStableIds} RACS no tienen ID ÚNICO ORIGEN. Se aplicará conciliación estricta por unidad, número de origen, fecha, reportante, áreas, lugar y descripción; usa el modelo oficial para evitar duplicidad.`);
   return { sheetName:chosen.name, headerRow:chosen.headerRow+1, totalRows:rows.length, validRows:records.length, rejectedRows:errors.length, records, errors, warnings, periods:periodList, dominantPeriod:periodList[0]?.period||null, repeatedNumbers:repeated, stableIds:records.length-missingStableIds, missingStableIds };

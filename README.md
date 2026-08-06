@@ -1,8 +1,8 @@
-# CAPSAN6 4.0.32 · Sistema Integral de Gestión SSOMA
+# CAPSAN6 4.0.33 · Sistema Integral de Gestión SSOMA
 
 
 
-## Corrección 4.0.32 · Identidad real y trazabilidad de RACS
+## Corrección 4.0.33 · Identidad real y trazabilidad de RACS
 
 - Evita fusionar observaciones distintas que solo comparten descripción.
 - La identidad considera unidad, número de origen, fecha, reportante, áreas, lugar y descripción.

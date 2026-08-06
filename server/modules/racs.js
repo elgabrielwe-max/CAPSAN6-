@@ -15,7 +15,7 @@ import { audit, notify } from '../services/audit.js';
 import { unitScope, parseFilters } from '../scope.js';
 import { config } from '../config.js';
 import { dueDateForRisk } from '../services/racDeadlines.js';
-import { buildRacFingerprints, findActiveRacMatch, findReconciliationMemory, rememberRacsBeforePurge, restoreReconciliationMemory } from '../services/racReconciliation.js';
+import { buildRacFingerprints, findActiveRacMatch, findReconciliationMemory, rememberRacsBeforePurge, restoreReconciliationMemory, allocateUniqueRacReportCode } from '../services/racReconciliation.js';
 
 const upload=multer({storage:multer.memoryStorage(),limits:{fileSize:25*1024*1024}});
 export const racsRouter=Router();
@@ -203,7 +203,7 @@ racsRouter.post('/',requireCapability('rac:create'),async(req,res)=>{
     const selectedCause=await resolveRacCauseSelection(client,{categoryId:b.causeCategoryId,subtypeId:b.causeSubtypeId,categoryName:b.causeCategory,subtypeName:b.causeSubtype,reportType,fallbackText:description});
     const unitSupervisors=(await client.query(`SELECT DISTINCT u.id,u.name FROM users u JOIN user_business_units ubu ON ubu.user_id=u.id WHERE ubu.business_unit_id=$1 AND u.role='SUPERVISOR' AND u.active=TRUE AND u.deleted_at IS NULL ORDER BY u.name,u.id`,[unitId])).rows;
     const primarySupervisor=unitSupervisors[0]||null;
-    const prefix=bu.code||'RAC';const sequence=Number((await client.query(`SELECT COUNT(*)::int total FROM racs WHERE business_unit_id=$1 AND report_date=$2`,[unitId,reportDate])).rows[0].total)+1;const code=`${prefix}-${reportDate.replaceAll('-','')}-${String(sequence).padStart(4,'0')}-${crypto.randomBytes(2).toString('hex').toUpperCase()}`;
+    const prefix=bu.code||'RAC';const sequence=Number((await client.query(`SELECT COUNT(*)::int total FROM racs WHERE business_unit_id=$1 AND report_date=$2`,[unitId,reportDate])).rows[0].total)+1;const preferredCode=`${prefix}-${reportDate.replaceAll('-','')}-${String(sequence).padStart(4,'0')}-${crypto.randomBytes(2).toString('hex').toUpperCase()}`;const code=await allocateUniqueRacReportCode(client,preferredCode);
     const fingerprints=buildRacFingerprints({businessUnitName:bu.name,sourceReportNumber:b.sourceReportNumber,reportDate,reporterName:b.reporterName,reportingArea:b.reportingArea,reportedArea:b.reportedArea||b.reportingArea,location:b.location,description});
     const result=await client.query(`INSERT INTO racs(report_code,source_uid,source_report_number,business_unit_id,reporting_area_id,reported_area_id,reporter_name,reporter_type,location,report_date,risk_level,report_type,deviation_type,cause_category,cause_subtype,description,supervisor_user_id,supervisor_name_text,corrective_action,status,progress_percent,due_date,environmental_flag,environmental_category,environmental_confidence,record_fingerprint,content_fingerprint,created_by)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,'PENDIENTE',0,$20,$21,$22,$23,$24,$25,$26) RETURNING *`,[
@@ -288,7 +288,7 @@ racsRouter.post('/import',requireCapability('rac:import'),upload.single('file'),
       return id;
     };
 
-    let inserted=0,updated=0,reconciled=0,restoredEvidence=0,duplicatesMerged=0,preservedOperational=0,sourceRowsConsolidated=0;
+    let inserted=0,updated=0,reconciled=0,restoredEvidence=0,duplicatesMerged=0,preservedOperational=0,sourceRowsConsolidated=0,reportCodesRegenerated=0;
     const touchedRacIds=new Set();
     for(const r of importRecords){
       const reporting=await resolveArea(r.reportingArea);
@@ -349,6 +349,8 @@ racsRouter.post('/import',requireCapability('rac:import'),upload.single('file'),
         updated++;
         if(preserveOperational)preservedOperational++;
       }else{
+        const reportCode=await allocateUniqueRacReportCode(client,r.internalCode);
+        if(reportCode!==r.internalCode)reportCodesRegenerated++;
         racId=(await client.query(`
           INSERT INTO racs(
             report_code,source_uid,source_report_number,business_unit_id,reporting_area_id,reported_area_id,
@@ -364,7 +366,7 @@ racsRouter.post('/import',requireCapability('rac:import'),upload.single('file'),
           )
           RETURNING id
         `,[
-          r.internalCode,r.externalId||null,r.sourceReportNumber,bu.id,reporting,reported,r.reporterName,r.reporterType,
+          reportCode,r.externalId||null,r.sourceReportNumber,bu.id,reporting,reported,r.reporterName,r.reporterType,
           r.location,r.reportDate,r.riskLevel,canonicalRacReportType(r.reportType)||selectedCause.reportType,r.rawCause||r.deviationType||selectedCause.subtype.name,selectedCause.category.name,
           selectedCause.subtype.name,r.description,matchedSupervisor?.id||null,r.supervisorName||null,
           r.correctiveAction||null,r.status,r.progressPercent,dueDateForRisk(r.reportDate,r.riskLevel),
@@ -407,17 +409,18 @@ racsRouter.post('/import',requireCapability('rac:import'),upload.single('file'),
           summary=COALESCE(summary,'{}'::jsonb)||jsonb_build_object(
             'processedRows',$4::int,
             'uniqueAffected',$5::int,
-            'sourceRowsConsolidated',$6::int
+            'sourceRowsConsolidated',$6::int,
+            'reportCodesRegenerated',$7::int
           )
       WHERE id=$3
-    `,[inserted,updated,batch.id,importRecords.length,expectedUnique,sourceRowsConsolidated]);
+    `,[inserted,updated,batch.id,importRecords.length,expectedUnique,sourceRowsConsolidated,reportCodesRegenerated]);
 
     const centralTotal=Number((await client.query(`SELECT COUNT(*)::int total FROM racs WHERE business_unit_id=$1`,[bu.id])).rows[0].total);
     const periodForTotal=importedPeriods.length===1?importedPeriods[0]:analysis.dominantPeriod;
     const periodTotal=periodForTotal?Number((await client.query(`SELECT COUNT(*)::int total FROM racs WHERE business_unit_id=$1::int AND TO_CHAR(report_date,'YYYY-MM')=$2::text`,[bu.id,periodForTotal])).rows[0].total):centralTotal;
     return{
       batchId:batch.id,inserted,updated,reconciled,restoredEvidence,duplicatesMerged,preservedOperational,
-      processedRows:importRecords.length,uniqueAffected:expectedUnique,sourceRowsConsolidated,verified,centralTotal,periodTotal,
+      processedRows:importRecords.length,uniqueAffected:expectedUnique,sourceRowsConsolidated,reportCodesRegenerated,verified,centralTotal,periodTotal,
       rejected:analysis.errors.length,period:detectedPeriod,importedPeriods,periodMode,warnings:analysis.warnings
     };
   });

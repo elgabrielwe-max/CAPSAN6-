@@ -41,6 +41,35 @@ export function sameRacContentIdentity(left={},right={}){
     (!a.reportedArea||a.reportedArea===b.reportedArea));
 }
 
+// Identidad estable usada únicamente cuando el código interno generado ya existe.
+// Permite reconocer el mismo RAC aunque posteriormente se haya corregido el lugar o el área,
+// pero nunca mezcla reportantes, fechas, números de origen o descripciones diferentes.
+export function sameRacCodeIdentity(left={},right={}){
+  const a=identityParts(left),b=identityParts(right);
+  return Boolean(a.date&&a.source&&a.reporter&&a.description&&
+    a.date===b.date&&a.source===b.source&&a.reporter===b.reporter&&a.description===b.description&&
+    (!a.unit||!b.unit||a.unit===b.unit));
+}
+
+const REPORT_CODE_MAX_LENGTH=80;
+const collisionCode=(base,attempt)=>{
+  const suffix=`-${String(attempt).padStart(2,'0')}`;
+  return `${base.slice(0,Math.max(1,REPORT_CODE_MAX_LENGTH-suffix.length))}${suffix}`;
+};
+
+export async function allocateUniqueRacReportCode(client,preferredCode){
+  const base=clean(preferredCode).toUpperCase().slice(0,REPORT_CODE_MAX_LENGTH);
+  if(!base)throw Object.assign(new Error('No se pudo generar el código interno del RAC'),{status:500});
+  // Evita que dos importaciones concurrentes reserven el mismo código base.
+  await client.query(`SELECT pg_advisory_xact_lock(hashtext($1::text))`,[base]);
+  for(let attempt=1;attempt<=9999;attempt++){
+    const candidate=attempt===1?base:collisionCode(base,attempt);
+    const exists=await client.query(`SELECT 1 FROM racs WHERE report_code=$1 LIMIT 1`,[candidate]);
+    if(!exists.rowCount)return candidate;
+  }
+  throw Object.assign(new Error(`No se pudo reservar un código único para ${base}`),{status:500});
+}
+
 const statusWeight=status=>({
   'LEVANTADO':500,
   'PENDIENTE DE VALIDACION':400,
@@ -88,6 +117,14 @@ async function activeCandidates(client,record,businessUnitId){
   if(record.externalId){
     const rows=await queryActive(client,businessUnitId,'r.source_uid=$2',[record.externalId]);
     if(rows.length)return chooseActive(rows);
+  }
+
+  // Si el código determinista ya existe, se reutiliza únicamente cuando sus datos estables
+  // corresponden al mismo RAC. Una colisión real continuará al generador de código alternativo.
+  if(record.internalCode){
+    const rows=await queryActive(client,businessUnitId,'r.report_code=$2',[record.internalCode]);
+    const exact=rows.filter(row=>sameRacCodeIdentity(record,row)||sameRacContentIdentity(record,row));
+    if(exact.length)return chooseActive(exact);
   }
 
   if(shouldMatchBySourceReportNumber(record)){
