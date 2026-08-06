@@ -265,3 +265,11 @@ Los cierres antiguos sin archivo y sin excepción permanecen como **Sin sustento
 - Primero crea las columnas de direccionamiento y recién después crea `idx_racs_direction`.
 - Evita el ciclo de reinicios con error PostgreSQL `42703`.
 - No elimina ni reinicia RACS, usuarios, archivos o configuraciones existentes.
+
+
+## Hotfix 4.0.29 · Importación RACS
+
+- Corrige la sentencia `INSERT INTO racs` usada por la importación conciliada.
+- Alinea 33 columnas de destino con 33 expresiones SQL y 32 parámetros de entrada más el valor calculado de `lifted_at`.
+- Evita el error PostgreSQL `42601: INSERT has more expressions than target columns`.
+- La importación permanece transaccional: ante un error no se guardan filas parciales.

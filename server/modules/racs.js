@@ -359,7 +359,7 @@ racsRouter.post('/import',requireCapability('rac:import'),upload.single('file'),
           )
           VALUES(
             $1,$2,$3,$4,$5,$6,$7,$8,$9,$10::date,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21::int,
-            CASE WHEN $21::int>=100 THEN $10::date ELSE NULL::date END,$22::date,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33
+            CASE WHEN $21::int>=100 THEN $10::date ELSE NULL::date END,$22::date,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32
           )
           RETURNING id
         `,[
