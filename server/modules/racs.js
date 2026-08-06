@@ -15,6 +15,7 @@ import { audit, notify } from '../services/audit.js';
 import { unitScope, parseFilters } from '../scope.js';
 import { config } from '../config.js';
 import { dueDateForRisk } from '../services/racDeadlines.js';
+import { buildRacFingerprints, findActiveRacMatch, findReconciliationMemory, rememberRacsBeforePurge, restoreReconciliationMemory } from '../services/racReconciliation.js';
 
 const upload=multer({storage:multer.memoryStorage(),limits:{fileSize:25*1024*1024}});
 export const racsRouter=Router();
@@ -203,9 +204,10 @@ racsRouter.post('/',requireCapability('rac:create'),async(req,res)=>{
     const unitSupervisors=(await client.query(`SELECT DISTINCT u.id,u.name FROM users u JOIN user_business_units ubu ON ubu.user_id=u.id WHERE ubu.business_unit_id=$1 AND u.role='SUPERVISOR' AND u.active=TRUE AND u.deleted_at IS NULL ORDER BY u.name,u.id`,[unitId])).rows;
     const primarySupervisor=unitSupervisors[0]||null;
     const prefix=bu.code||'RAC';const sequence=Number((await client.query(`SELECT COUNT(*)::int total FROM racs WHERE business_unit_id=$1 AND report_date=$2`,[unitId,reportDate])).rows[0].total)+1;const code=`${prefix}-${reportDate.replaceAll('-','')}-${String(sequence).padStart(4,'0')}-${crypto.randomBytes(2).toString('hex').toUpperCase()}`;
-    const result=await client.query(`INSERT INTO racs(report_code,source_report_number,business_unit_id,reporting_area_id,reported_area_id,reporter_name,reporter_type,location,report_date,risk_level,report_type,deviation_type,cause_category,cause_subtype,description,supervisor_user_id,supervisor_name_text,corrective_action,status,progress_percent,due_date,environmental_flag,environmental_category,environmental_confidence,created_by)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,'PENDIENTE',0,$19,$20,$21,$22,$23) RETURNING *`,[
-      code,clean(b.sourceReportNumber)||null,unitId,reporting,reported,upper(b.reporterName),upper(b.reporterType)||'COLABORADOR',upper(b.location)||null,reportDate,risk,reportType,selectedCause.subtype.name,selectedCause.category.name,selectedCause.subtype.name,description,primarySupervisor?.id||null,primarySupervisor?.name||null,upper(b.correctiveAction)||null,dueDateForRisk(reportDate,risk),Boolean(ai?.environmental||selectedCause.category.code==='VI'),selectedCause.category.code==='VI'?selectedCause.subtype.name:ai?.environmentalCategory||null,ai?.confidence||null,req.user.id]);
+    const fingerprints=buildRacFingerprints({businessUnitName:bu.name,reportDate,reporterName:b.reporterName,reportingArea:b.reportingArea,location:b.location,description});
+    const result=await client.query(`INSERT INTO racs(report_code,source_uid,source_report_number,business_unit_id,reporting_area_id,reported_area_id,reporter_name,reporter_type,location,report_date,risk_level,report_type,deviation_type,cause_category,cause_subtype,description,supervisor_user_id,supervisor_name_text,corrective_action,status,progress_percent,due_date,environmental_flag,environmental_category,environmental_confidence,record_fingerprint,content_fingerprint,created_by)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,'PENDIENTE',0,$20,$21,$22,$23,$24,$25,$26) RETURNING *`,[
+      code,upper(b.sourceUid)||null,clean(b.sourceReportNumber)||null,unitId,reporting,reported,upper(b.reporterName),upper(b.reporterType)||'COLABORADOR',upper(b.location)||null,reportDate,risk,reportType,selectedCause.subtype.name,selectedCause.category.name,selectedCause.subtype.name,description,primarySupervisor?.id||null,primarySupervisor?.name||null,upper(b.correctiveAction)||null,dueDateForRisk(reportDate,risk),Boolean(ai?.environmental||selectedCause.category.code==='VI'),selectedCause.category.code==='VI'?selectedCause.subtype.name:ai?.environmentalCategory||null,ai?.confidence||null,fingerprints.recordFingerprint,fingerprints.contentFingerprint,req.user.id]);
     await client.query(`UPDATE racs SET cause_category_id=$1,cause_subtype_id=$2 WHERE id=$3`,[selectedCause.category.id,selectedCause.subtype.id,result.rows[0].id]);
     result.rows[0].cause_category_id=selectedCause.category.id;result.rows[0].cause_subtype_id=selectedCause.subtype.id;
     for(const supervisor of unitSupervisors)await client.query(`INSERT INTO rac_assignments(rac_id,supervisor_user_id,assigned_by,active) VALUES($1,$2,$3,TRUE) ON CONFLICT DO NOTHING`,[result.rows[0].id,supervisor.id,req.user.id]);
@@ -222,7 +224,14 @@ racsRouter.post('/import/analyze',requireCapability('rac:import'),upload.single(
   if(!bu)return res.status(400).json({error:'Selecciona una unidad'});
   if(!assertUnitAccess(req.user,bu.id))return res.status(403).json({error:'Unidad fuera de tu alcance'});
   const analysis=analyzeRacWorkbook(req.file.buffer,req.file.originalname,{businessUnitName:bu.name,unitCode:bu.code});
-  res.json({...analysis,records:analysis.records.slice(0,50)});
+  let willUpdate=0,willRestore=0,willInsert=0,preservedStates=0;
+  for(const record of analysis.records){
+    const existing=await findActiveRacMatch(pool,record,bu.id);
+    if(existing){willUpdate++;if(existing.has_operational_activity)preservedStates++;continue;}
+    const memory=await findReconciliationMemory(pool,record,bu.id);
+    if(memory.length)willRestore++;else willInsert++;
+  }
+  res.json({...analysis,reconciliationPreview:{willUpdate,willRestore,willInsert,preservedStates},records:analysis.records.slice(0,50)});
 }));
 
 racsRouter.post('/import',requireCapability('rac:import'),upload.single('file'),asyncRoute(async(req,res)=>{
@@ -279,87 +288,100 @@ racsRouter.post('/import',requireCapability('rac:import'),upload.single('file'),
       return id;
     };
 
-    let inserted=0,updated=0;
+    let inserted=0,updated=0,reconciled=0,restoredEvidence=0,duplicatesMerged=0,preservedOperational=0;
     for(const r of importRecords){
       const reporting=await resolveArea(r.reportingArea);
       const reported=await resolveArea(r.reportedArea);
       const matchedSupervisor=supervisors.get(normalizedName(r.supervisorName))||null;
       const selectedCause=await resolveRacCauseSelection(client,{categoryName:r.causeCategory,subtypeName:r.causeSubtype,reportType:r.reportType,fallbackText:`${r.causeSubtype||''} ${r.description||''}`});
-      const existing=(await client.query(`SELECT id FROM racs WHERE report_code=$1`,[r.internalCode])).rows[0];
+      const existing=await findActiveRacMatch(client,r,bu.id);
       let racId;
+      let preserveAssignments=false;
 
       if(existing){
+        const preserveOperational=Boolean(existing.has_operational_activity);
+        preserveAssignments=preserveOperational;
         racId=(await client.query(`
           UPDATE racs SET
-            source_report_number=$1,
-            business_unit_id=$2,
-            reporting_area_id=$3,
-            reported_area_id=$4,
-            reporter_name=$5,
-            reporter_type=$6,
-            location=$7,
-            report_date=$8::date,
-            risk_level=$9,
-            report_type=$10,
-            deviation_type=$11,
-            cause_category=$12,
-            cause_subtype=$13,
-            description=$14,
-            supervisor_user_id=COALESCE($15,supervisor_user_id),
-            supervisor_name_text=$16,
-            corrective_action=$17,
-            status=$18,
-            progress_percent=$19,
-            lifted_at=CASE WHEN $19::int>=100 THEN $8::date ELSE NULL::date END,
-            due_date=$20::date,
-            environmental_flag=$21,
-            environmental_category=$22,
-            environmental_confidence=$23,
-            source_file=$24,
-            source_sheet=$25,
-            source_row=$26,
-            import_batch_id=$27,
+            source_uid=COALESCE($1,source_uid),
+            source_report_number=$2,
+            business_unit_id=$3,
+            reporting_area_id=$4,
+            reported_area_id=$5,
+            reporter_name=$6,
+            reporter_type=$7,
+            location=$8,
+            report_date=$9::date,
+            risk_level=$10,
+            report_type=$11,
+            deviation_type=$12,
+            cause_category=$13,
+            cause_subtype=$14,
+            description=$15,
+            supervisor_user_id=COALESCE($16,supervisor_user_id),
+            supervisor_name_text=COALESCE(NULLIF($17,''),supervisor_name_text),
+            corrective_action=COALESCE(NULLIF($18,''),corrective_action),
+            status=CASE WHEN $31::boolean THEN status ELSE $19 END,
+            progress_percent=CASE WHEN $31::boolean THEN progress_percent ELSE $20 END,
+            lifted_at=CASE WHEN $31::boolean THEN lifted_at WHEN $20::int>=100 THEN $9::date ELSE NULL::date END,
+            due_date=$21::date,
+            environmental_flag=$22,
+            environmental_category=$23,
+            environmental_confidence=$24,
+            source_file=$25,
+            source_sheet=$26,
+            source_row=$27,
+            import_batch_id=$28,
+            record_fingerprint=$29,
+            content_fingerprint=$30,
             updated_at=NOW()
-          WHERE id=$28
+          WHERE id=$32
           RETURNING id
         `,[
-          r.sourceReportNumber,bu.id,reporting,reported,r.reporterName,r.reporterType,
+          r.externalId||null,r.sourceReportNumber,bu.id,reporting,reported,r.reporterName,r.reporterType,
           r.location,r.reportDate,r.riskLevel,canonicalRacReportType(r.reportType)||selectedCause.reportType,selectedCause.subtype.name,selectedCause.category.name,
           selectedCause.subtype.name,r.description,matchedSupervisor?.id||null,r.supervisorName||null,
           r.correctiveAction||null,r.status,r.progressPercent,dueDateForRisk(r.reportDate,r.riskLevel),
           Boolean(r.environmentalFlag||selectedCause.category.code==='VI'),selectedCause.category.code==='VI'?selectedCause.subtype.name:r.environmentalCategory,r.environmentalConfidence,r.sourceFile,
-          r.sourceSheet,r.sourceRow,batch.id,existing.id
+          r.sourceSheet,r.sourceRow,batch.id,r.recordFingerprint,r.contentFingerprint,preserveOperational,existing.id
         ])).rows[0].id;
         updated++;
+        if(preserveOperational)preservedOperational++;
       }else{
         racId=(await client.query(`
           INSERT INTO racs(
-            report_code,source_report_number,business_unit_id,reporting_area_id,reported_area_id,
+            report_code,source_uid,source_report_number,business_unit_id,reporting_area_id,reported_area_id,
             reporter_name,reporter_type,location,report_date,risk_level,report_type,deviation_type,
             cause_category,cause_subtype,description,supervisor_user_id,supervisor_name_text,
             corrective_action,status,progress_percent,lifted_at,due_date,environmental_flag,
             environmental_category,environmental_confidence,source_file,source_sheet,source_row,
-            import_batch_id,created_by
+            import_batch_id,record_fingerprint,content_fingerprint,created_by
           )
           VALUES(
-            $1,$2,$3,$4,$5,$6,$7,$8,$9::date,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20::int,
-            CASE WHEN $20::int>=100 THEN $9::date ELSE NULL::date END,$21::date,$22,$23,$24,$25,$26,$27,$28,$29
+            $1,$2,$3,$4,$5,$6,$7,$8,$9,$10::date,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21::int,
+            CASE WHEN $21::int>=100 THEN $10::date ELSE NULL::date END,$22::date,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33
           )
           RETURNING id
         `,[
-          r.internalCode,r.sourceReportNumber,bu.id,reporting,reported,r.reporterName,r.reporterType,
+          r.internalCode,r.externalId||null,r.sourceReportNumber,bu.id,reporting,reported,r.reporterName,r.reporterType,
           r.location,r.reportDate,r.riskLevel,canonicalRacReportType(r.reportType)||selectedCause.reportType,selectedCause.subtype.name,selectedCause.category.name,
           selectedCause.subtype.name,r.description,matchedSupervisor?.id||null,r.supervisorName||null,
           r.correctiveAction||null,r.status,r.progressPercent,dueDateForRisk(r.reportDate,r.riskLevel),
           Boolean(r.environmentalFlag||selectedCause.category.code==='VI'),selectedCause.category.code==='VI'?selectedCause.subtype.name:r.environmentalCategory,r.environmentalConfidence,r.sourceFile,
-          r.sourceSheet,r.sourceRow,batch.id,req.user.id
+          r.sourceSheet,r.sourceRow,batch.id,r.recordFingerprint,r.contentFingerprint,req.user.id
         ])).rows[0].id;
         inserted++;
       }
 
       await client.query(`UPDATE racs SET cause_category_id=$1,cause_subtype_id=$2 WHERE id=$3`,[selectedCause.category.id,selectedCause.subtype.id,racId]);
 
-      if(matchedSupervisor){
+      const memoryRows=await findReconciliationMemory(client,r,bu.id);
+      if(memoryRows.length){
+        const restored=await restoreReconciliationMemory(client,racId,memoryRows,req.user.id);
+        if(restored.restored){reconciled++;restoredEvidence+=restored.evidence;duplicatesMerged+=restored.duplicatesMerged;preserveAssignments=true;}
+      }
+
+      if(matchedSupervisor&&!preserveAssignments){
         await client.query(`UPDATE rac_assignments SET active=FALSE WHERE rac_id=$1 AND supervisor_user_id<>$2 AND active=TRUE`,[racId,matchedSupervisor.id]);
         await client.query(`INSERT INTO rac_assignments(rac_id,supervisor_user_id,assigned_by,active) VALUES($1,$2,$3,TRUE) ON CONFLICT DO NOTHING`,[racId,matchedSupervisor.id,req.user.id]);
       }
@@ -378,7 +400,7 @@ racsRouter.post('/import',requireCapability('rac:import'),upload.single('file'),
     const periodForTotal=importedPeriods.length===1?importedPeriods[0]:analysis.dominantPeriod;
     const periodTotal=periodForTotal?Number((await client.query(`SELECT COUNT(*)::int total FROM racs WHERE business_unit_id=$1::int AND TO_CHAR(report_date,'YYYY-MM')=$2::text`,[bu.id,periodForTotal])).rows[0].total):centralTotal;
     return{
-      batchId:batch.id,inserted,updated,verified,centralTotal,periodTotal,
+      batchId:batch.id,inserted,updated,reconciled,restoredEvidence,duplicatesMerged,preservedOperational,verified,centralTotal,periodTotal,
       rejected:analysis.errors.length,period:detectedPeriod,importedPeriods,periodMode,warnings:analysis.warnings
     };
   });
@@ -533,10 +555,9 @@ racsRouter.post('/purge/preview',requireCapability('rac:purge'),async(req,res)=>
 racsRouter.post('/purge/execute',requireCapability('rac:purge'),async(req,res)=>{
   const password=String(req.body.currentPassword||'');const master=(await pool.query(`SELECT password_hash FROM users WHERE id=$1`,[req.user.id])).rows[0];if(!master||!(await bcrypt.compare(password,master.password_hash)))return res.status(400).json({error:'Contraseña Máster incorrecta'});
   const unitId=req.body.businessUnitId?Number(req.body.businessUnitId):null,from=req.body.from||null,to=req.body.to||null;const params=[];const clauses=['TRUE'];let i=1;if(unitId){clauses.push(`business_unit_id=$${i++}`);params.push(unitId);}if(from){clauses.push(`report_date>=$${i++}`);params.push(from);}if(to){clauses.push(`report_date<=$${i++}`);params.push(to);}const where=clauses.join(' AND ');
-  const selected=(await pool.query(`SELECT * FROM racs WHERE ${where} ORDER BY id`,params)).rows;const phrase=`ELIMINAR ${selected.length} RACS`;if(req.body.phrase!==phrase)return res.status(409).json({error:`Escribe exactamente: ${phrase}`});
-  const backupDir=path.join(config.uploadDir,'purge-backups');await fs.mkdir(backupDir,{recursive:true});const backupPath=path.join(backupDir,`racs-${new Date().toISOString().replace(/[:.]/g,'-')}.json`);const ids=selected.map(x=>x.id);const evidence=ids.length?(await pool.query(`SELECT * FROM rac_evidence WHERE rac_id=ANY($1::int[])`,[ids])).rows:[];await fs.writeFile(backupPath,JSON.stringify({createdAt:new Date().toISOString(),filters:{unitId,from,to},racs:selected,evidence},null,2));
-  await tx(async client=>{if(ids.length)await client.query(`DELETE FROM system_notifications WHERE entity_type='RAC' AND entity_id=ANY($1::text[])`,[ids.map(String)]);if(ids.length)await client.query(`DELETE FROM racs WHERE id=ANY($1::int[])`,[ids]);});
-  const purgeReference=path.basename(backupPath,'.json');
-  await audit(req,'PURGE_RACS','RAC_PURGE',purgeReference,{count:ids.length,ids,backupPath,filters:{unitId,from,to}});
-  res.json({deleted:ids.length,backupPath,purgeReference});
+  const selected=(await pool.query(`SELECT r.*,bu.name business_unit,ar.name reporting_area,ad.name reported_area FROM racs r LEFT JOIN business_units bu ON bu.id=r.business_unit_id LEFT JOIN areas ar ON ar.id=r.reporting_area_id LEFT JOIN areas ad ON ad.id=r.reported_area_id WHERE ${where.replaceAll('business_unit_id','r.business_unit_id').replaceAll('report_date','r.report_date')} ORDER BY r.id`,params)).rows;const phrase=`ELIMINAR ${selected.length} RACS`;if(req.body.phrase!==phrase)return res.status(409).json({error:`Escribe exactamente: ${phrase}`});
+  const backupDir=path.join(config.uploadDir,'purge-backups');await fs.mkdir(backupDir,{recursive:true});const backupPath=path.join(backupDir,`racs-${new Date().toISOString().replace(/[:.]/g,'-')}.json`);const ids=selected.map(x=>x.id);const evidence=ids.length?(await pool.query(`SELECT * FROM rac_evidence WHERE rac_id=ANY($1::int[])`,[ids])).rows:[];const assignments=ids.length?(await pool.query(`SELECT * FROM rac_assignments WHERE rac_id=ANY($1::int[])`,[ids])).rows:[];const purgeReference=path.basename(backupPath,'.json');await fs.writeFile(backupPath,JSON.stringify({createdAt:new Date().toISOString(),filters:{unitId,from,to},racs:selected,evidence,assignments,reconciliationEnabled:true},null,2));
+  const remembered=await tx(async client=>{const total=ids.length?await rememberRacsBeforePurge(client,selected,purgeReference):0;if(ids.length)await client.query(`DELETE FROM system_notifications WHERE entity_type='RAC' AND entity_id=ANY($1::text[])`,[ids.map(String)]);if(ids.length)await client.query(`DELETE FROM racs WHERE id=ANY($1::int[])`,[ids]);return total;});
+  await audit(req,'PURGE_RACS','RAC_PURGE',purgeReference,{count:ids.length,ids,backupPath,remembered,filters:{unitId,from,to},reconciliationEnabled:true});
+  res.json({deleted:ids.length,backupPath,purgeReference,remembered,reconciliationEnabled:true});
 });

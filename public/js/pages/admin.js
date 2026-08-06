@@ -79,7 +79,7 @@ export async function usersPage(root){
 }
 
 export async function racPurgePage(root){
-  root.innerHTML=`<div class="page-head"><div><h2>Depuración segura de RACS</h2><p>Exclusiva para Máster. Siempre crea un respaldo JSON antes de eliminar.</p></div></div><section class="panel"><form id="purgeForm"><div class="form-grid three"><div class="field"><label>Unidad (vacío = todas)</label><select name="businessUnitId">${unitOptions()}</select></div><div class="field"><label>Desde</label><input type="date" name="from"></div><div class="field"><label>Hasta</label><input type="date" name="to"></div></div><button class="btn amber" type="button" id="previewPurge">Vista previa</button><div id="purgePreview"></div></form></section>`;
+  root.innerHTML=`<div class="page-head"><div><h2>Depuración segura de RACS</h2><p>Exclusiva para Máster. Crea respaldo JSON y memoria de conciliación antes de eliminar, para recuperar estados, evidencias, direccionamientos e historial al reimportar.</p></div></div><section class="panel"><form id="purgeForm"><div class="form-grid three"><div class="field"><label>Unidad (vacío = todas)</label><select name="businessUnitId">${unitOptions()}</select></div><div class="field"><label>Desde</label><input type="date" name="from"></div><div class="field"><label>Hasta</label><input type="date" name="to"></div></div><button class="btn amber" type="button" id="previewPurge">Vista previa</button><div id="purgePreview"></div></form></section>`;
 
   const purgeForm=$('#purgeForm');
   purgeForm.onsubmit=event=>event.preventDefault();
@@ -88,7 +88,7 @@ export async function racPurgePage(root){
   $('#previewPurge').onclick=async()=>{
     try{
       preview=await api('/api/racs/purge/preview',{method:'POST',body:formData(purgeForm)});
-      $('#purgePreview').innerHTML=`<div class="alert danger"><b>${preview.total} RACS</b> serán eliminados. Periodo: ${preview.date_from||'—'} a ${preview.date_to||'—'}.</div><div class="form-grid two"><div class="field"><label>Escribe exactamente: ${escapeHtml(preview.phrase)}</label><input id="purgePhrase" autocomplete="off" placeholder="${escapeHtml(preview.phrase)}"></div><div class="field"><label>Contraseña Máster</label><input id="purgePassword" type="password" autocomplete="current-password"></div></div><button class="btn danger" type="button" id="executePurge">Crear respaldo y eliminar</button>`;
+      $('#purgePreview').innerHTML=`<div class="alert danger"><b>${preview.total} RACS</b> serán eliminados. Periodo: ${preview.date_from||'—'} a ${preview.date_to||'—'}.</div><div class="alert ok"><b>Protección automática activa:</b> el sistema memorizará estados, evidencias, direccionamientos, asignaciones e historial para restaurarlos cuando vuelvas a importar el modelo oficial.</div><div class="form-grid two"><div class="field"><label>Escribe exactamente: ${escapeHtml(preview.phrase)}</label><input id="purgePhrase" autocomplete="off" placeholder="${escapeHtml(preview.phrase)}"></div><div class="field"><label>Contraseña Máster</label><input id="purgePassword" type="password" autocomplete="current-password"></div></div><button class="btn danger" type="button" id="executePurge">Crear respaldo y eliminar</button>`;
 
       $('#executePurge').onclick=async event=>{
         event.preventDefault();
@@ -112,9 +112,9 @@ export async function racPurgePage(root){
         try{
           const body={...formData(purgeForm),phrase,currentPassword};
           const result=await api('/api/racs/purge/execute',{method:'POST',body});
-          toast(`${result.deleted} RACS eliminados y respaldados`);
+          toast(`${result.deleted} RACS eliminados; ${result.remembered||0} preparados para conciliación`);
           preview=null;
-          $('#purgePreview').innerHTML=`<div class="alert ok"><b>${result.deleted} RACS eliminados.</b><br>Respaldo: ${escapeHtml(result.backupPath)}</div>`;
+          $('#purgePreview').innerHTML=`<div class="alert ok"><b>${result.deleted} RACS eliminados.</b><br>${result.remembered||0} registros guardados en memoria de conciliación.<br>Respaldo: ${escapeHtml(result.backupPath)}<br><b>Ahora importa el Excel oficial; el sistema restaurará automáticamente el estado más avanzado y las evidencias.</b></div>`;
         }catch(error){
           toast(error.message,'error');
           button.disabled=false;

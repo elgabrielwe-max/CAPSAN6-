@@ -1,15 +1,8 @@
-CAPSAN6 4.0.21 · PARCHE RIT DIARIO + IDS
+CAPSAN6 4.0.28 - CONCILIACION SEGURA RACS
 
-1. Extrae este ZIP.
-2. En la raíz del repositorio GitHub, usa Add file > Upload files.
-3. Arrastra TODO EL CONTENIDO INTERNO de esta carpeta, no la carpeta exterior.
-4. Acepta reemplazar los archivos existentes y confirma el commit.
-5. Espera el despliegue de Railway.
-6. Verifica en logs: CAPSAN6 4.0.21 ejecutándose en puerto 8080.
-7. Abre el sistema y presiona Ctrl + F5.
-
-Resultado:
-- DDS ya no se usa como nombre.
-- Nuevo módulo independiente RIT Diario.
-- Módulo IDS independiente.
-- Excel separado para RIT Diario e IDS.
+1. Despliega este parche ANTES de borrar los RACS.
+2. Confirma en Railway: CAPSAN6 4.0.28 ejecutándose en puerto 8080.
+3. Descarga el modelo oficial desde Importar Excel o usa el XLSX incluido.
+4. Depura los RACS. El sistema guardará memoria de estados, evidencias, direccionamiento, asignaciones e historial.
+5. Reimporta el Excel oficial. El sistema recuperará el estado actual y fusionará duplicados históricos.
+6. No cambies el ID UNICO ORIGEN en cargas futuras.

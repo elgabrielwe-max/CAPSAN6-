@@ -259,7 +259,7 @@ Los cierres antiguos sin archivo y sin excepción permanecen como **Sin sustento
 - Todos los cambios quedan registrados en auditoría.
 
 
-## Hotfix 4.0.27 · Migración segura de Listado direccionado
+## Hotfix 4.0.28 · Migración segura de Listado direccionado
 
 - Corrige el arranque sobre bases PostgreSQL existentes que todavía no tenían `racs.directed_area_id`.
 - Primero crea las columnas de direccionamiento y recién después crea `idx_racs_direction`.

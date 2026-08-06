@@ -30,6 +30,9 @@ async function ensureColumns() {
     `ALTER TABLE grades ADD COLUMN IF NOT EXISTS observation TEXT`,
     `ALTER TABLE racs ADD COLUMN IF NOT EXISTS business_unit_id INTEGER`,
     `ALTER TABLE racs ADD COLUMN IF NOT EXISTS source_report_number VARCHAR(80)`,
+    `ALTER TABLE racs ADD COLUMN IF NOT EXISTS source_uid VARCHAR(160)`,
+    `ALTER TABLE racs ADD COLUMN IF NOT EXISTS record_fingerprint VARCHAR(64)`,
+    `ALTER TABLE racs ADD COLUMN IF NOT EXISTS content_fingerprint VARCHAR(64)`,
     `ALTER TABLE racs ADD COLUMN IF NOT EXISTS cause_category VARCHAR(180)`,
     `ALTER TABLE racs ADD COLUMN IF NOT EXISTS cause_subtype VARCHAR(220)`,
     `ALTER TABLE racs ADD COLUMN IF NOT EXISTS cause_category_id INTEGER`,
@@ -540,10 +543,32 @@ export async function initSchema() {
 
   await ensureColumns();
 
+  await q(`CREATE TABLE IF NOT EXISTS rac_reconciliation_memory (
+    id BIGSERIAL PRIMARY KEY,
+    purge_reference TEXT NOT NULL,
+    old_rac_id INTEGER NOT NULL,
+    business_unit_id INTEGER,
+    source_uid VARCHAR(160),
+    source_report_number VARCHAR(80),
+    report_date DATE,
+    record_fingerprint VARCHAR(64),
+    content_fingerprint VARCHAR(64),
+    rac_snapshot JSONB NOT NULL,
+    evidence_snapshot JSONB NOT NULL DEFAULT '[]'::jsonb,
+    assignments_snapshot JSONB NOT NULL DEFAULT '[]'::jsonb,
+    restored_at TIMESTAMPTZ,
+    restored_rac_id INTEGER,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`);
+  await q(`CREATE INDEX IF NOT EXISTS idx_rac_reconciliation_match ON rac_reconciliation_memory(business_unit_id,source_uid,source_report_number,report_date,record_fingerprint,content_fingerprint)`);
+  await q(`CREATE INDEX IF NOT EXISTS idx_rac_reconciliation_pending ON rac_reconciliation_memory(restored_at,business_unit_id)`);
+
   // Los índices que dependen de columnas agregadas por migración deben crearse
   // después de ensureColumns(). En bases existentes, CREATE TABLE IF NOT EXISTS
   // no incorpora columnas nuevas y el índice fallaría durante el arranque.
   await q(`CREATE INDEX IF NOT EXISTS idx_racs_direction ON racs(business_unit_id,directed_area_id,status)`);
+  await q(`CREATE INDEX IF NOT EXISTS idx_racs_fingerprint ON racs(business_unit_id,record_fingerprint,content_fingerprint)`);
+  await q(`CREATE UNIQUE INDEX IF NOT EXISTS idx_racs_source_uid_unique ON racs(business_unit_id,source_uid) WHERE source_uid IS NOT NULL`);
 
   // Normaliza restricciones históricas sin borrar información.
   await q(`UPDATE users SET username=COALESCE(username, split_part(email,'@',1)) WHERE username IS NULL`);
@@ -663,6 +688,7 @@ export async function initSchema() {
   ]) { try { await q(sql); } catch (error) { if (error.code !== '42703') throw error; } }
 
   await q(`INSERT INTO schema_migrations(version) VALUES('4.0.2') ON CONFLICT DO NOTHING`);
+  await q(`INSERT INTO schema_migrations(version) VALUES('4.0.28') ON CONFLICT DO NOTHING`);
   await q(`INSERT INTO schema_migrations(version) VALUES('4.0.3') ON CONFLICT DO NOTHING`);
   await q(`INSERT INTO schema_migrations(version) VALUES('4.0.4') ON CONFLICT DO NOTHING`);
   await q(`INSERT INTO schema_migrations(version) VALUES('4.0.6') ON CONFLICT DO NOTHING`);
