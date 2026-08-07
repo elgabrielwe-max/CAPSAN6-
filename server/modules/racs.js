@@ -16,7 +16,7 @@ import { unitScope, parseFilters } from '../scope.js';
 import { config } from '../config.js';
 import { dueDateForRisk } from '../services/racDeadlines.js';
 import { buildRacFingerprints, findActiveRacMatch, findReconciliationMemory, rememberRacsBeforePurge, restoreReconciliationMemory, allocateUniqueRacReportCode, recoverHistoricalEvidence, listHistoricalEvidenceRecords } from '../services/racReconciliation.js';
-import { cacheUploadedFile, loadCachedFile, removeCachedFile, beginChunkedUpload, saveChunkedUploadPart, completeChunkedUpload } from '../services/uploadCache.js';
+import { loadOrCompleteChunkedFile, removeCachedFile, beginChunkedUpload, saveChunkedUploadPart, completeChunkedUpload } from '../services/uploadCache.js';
 
 const upload=multer({storage:multer.memoryStorage(),limits:{fileSize:25*1024*1024}});
 export const racsRouter=Router();
@@ -282,13 +282,9 @@ racsRouter.post('/import/analyze',requireCapability('rac:import'),upload.single(
   if(!bu)return res.status(400).json({error:'Selecciona una unidad'});
   if(!assertUnitAccess(req.user,bu.id))return res.status(403).json({error:'Unidad fuera de tu alcance'});
   const uploadToken=clean(req.body.uploadToken);
-  const importFile=req.file||(uploadToken?await loadCachedFile(uploadToken,{userId:req.user.id,businessUnitId:bu.id,purpose:'RAC_IMPORT'}):null);
+  const importFile=req.file||(uploadToken?await loadOrCompleteChunkedFile(uploadToken,{userId:req.user.id,businessUnitId:bu.id,purpose:'RAC_IMPORT'}):null);
   if(!importFile)return res.status(400).json({error:'Selecciona un Excel o completa la carga por partes'});
   const analysis=analyzeRacWorkbook(importFile.buffer,importFile.originalname,{businessUnitName:bu.name,unitCode:bu.code});
-  // Genera una copia nueva y estable después del análisis. No reutiliza el token de ensamblado,
-  // porque una rotación de réplica de Railway puede invalidar esa referencia entre Analizar y Confirmar.
-  const cachedUpload=await cacheUploadedFile(importFile,{userId:req.user.id,businessUnitId:bu.id,purpose:'RAC_IMPORT'});
-  if(uploadToken&&uploadToken!==cachedUpload.token)await removeCachedFile(uploadToken).catch(()=>{});
   let willUpdate=0,willRestore=0,willInsert=0,preservedStates=0;
   for(const record of analysis.records){
     const existing=await findActiveRacMatch(pool,record,bu.id);
@@ -296,7 +292,7 @@ racsRouter.post('/import/analyze',requireCapability('rac:import'),upload.single(
     const memory=await findReconciliationMemory(pool,record,bu.id);
     if(memory.length)willRestore++;else willInsert++;
   }
-  res.json({...analysis,uploadToken:cachedUpload.token,uploadExpiresAt:cachedUpload.expiresAt,reconciliationPreview:{willUpdate,willRestore,willInsert,preservedStates},records:analysis.records.slice(0,50)});
+  res.json({...analysis,uploadToken:uploadToken||importFile.uploadToken,uploadExpiresAt:importFile.expiresAt,reconciliationPreview:{willUpdate,willRestore,willInsert,preservedStates},records:analysis.records.slice(0,50)});
 }));
 
 racsRouter.post('/import',requireCapability('rac:import'),upload.single('file'),asyncRoute(async(req,res)=>{
@@ -304,7 +300,7 @@ racsRouter.post('/import',requireCapability('rac:import'),upload.single('file'),
   if(!bu)return res.status(400).json({error:'Selecciona una unidad'});
   if(!assertUnitAccess(req.user,bu.id))return res.status(403).json({error:'Unidad fuera de tu alcance'});
   const uploadToken=clean(req.body.uploadToken);
-  const importFile=req.file||(uploadToken?await loadCachedFile(uploadToken,{userId:req.user.id,businessUnitId:bu.id,purpose:'RAC_IMPORT'}):null);
+  const importFile=req.file||(uploadToken?await loadOrCompleteChunkedFile(uploadToken,{userId:req.user.id,businessUnitId:bu.id,purpose:'RAC_IMPORT'}):null);
   if(!importFile)return res.status(400).json({error:'Selecciona un Excel o vuelve a analizar el archivo'});
 
   const analysis=analyzeRacWorkbook(importFile.buffer,importFile.originalname,{businessUnitName:bu.name,unitCode:bu.code});

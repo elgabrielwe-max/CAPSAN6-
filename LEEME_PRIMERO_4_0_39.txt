@@ -1,0 +1,11 @@
+CAPSAN6 4.0.39 - IMPORTACIÓN RACS SIN CACHÉ ENTRE SOLICITUDES
+
+1. Suba el contenido interno del parche a la raíz de GitHub.
+2. Espere el despliegue de Railway.
+3. Verifique: CAPSAN6 4.0.39 ejecutándose en puerto 8080.
+4. Cierre la pestaña anterior y abra CAPSAN6 nuevamente.
+5. Presione Ctrl + F5.
+6. Seleccione el Excel, analice y confirme.
+
+El análisis y la importación procesan el archivo en la misma solicitud que finaliza sus partes.
+La confirmación vuelve a transmitir el Excel por partes para no depender de una caché temporal entre pasos.

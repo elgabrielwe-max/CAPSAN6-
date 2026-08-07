@@ -203,6 +203,17 @@ export async function loadCachedFile(token, { userId, businessUnitId, purpose = 
   };
 }
 
+export async function loadOrCompleteChunkedFile(token, { userId, businessUnitId, purpose = 'RAC_IMPORT' } = {}) {
+  const owner = { userId, businessUnitId, purpose };
+  try {
+    return await loadCachedFile(token, owner);
+  } catch (error) {
+    if (Number(error?.status) !== 410) throw error;
+  }
+  await completeChunkedUpload(token, owner);
+  return loadCachedFile(token, owner);
+}
+
 export async function removeCachedFile(token, knownMeta = null) {
   const normalized = String(token || '').trim();
   if (!tokenPattern.test(normalized)) return;

@@ -78,9 +78,7 @@ async function uploadRacWorkbookInChunks(file,businessUnitId,onProgress=()=>{}){
     });
     onProgress(Math.round((index+1)*100/totalChunks),index+1,totalChunks);
   }
-  return retryChunkRequest('/api/racs/import/upload/complete',{
-    uploadToken:initialized.uploadToken,businessUnitId
-  });
+  return {uploadToken:initialized.uploadToken,totalChunks,chunkSize};
 }
 export async function racDashboardPage(root){root.innerHTML=`<div class="page-head"><div><h2>Dashboard principal RACS</h2><p>Vista compacta con filtros de unidad, fecha, estado, riesgo y Supervisor. Plazos: ALTO 48 h · MEDIO 3 días · BAJO 4 días.</p></div></div><section class="panel"><form id="racFilters" class="filter-grid"><div class="field"><label>Unidad</label><select name="businessUnitId">${unitOptions()}</select></div><div class="field"><label>Desde</label><input type="date" name="from"></div><div class="field"><label>Hasta</label><input type="date" name="to"></div><div class="field"><label>Estado</label><select name="status"><option value="">Todos</option>${state.catalogs.racStatuses.map(x=>`<option>${x}</option>`).join('')}</select></div><div class="field"><label>Riesgo</label><select name="risk"><option value="">Todos</option>${state.catalogs.riskLevels.map(x=>`<option>${x}</option>`).join('')}</select></div><div class="field"><label>Tipo</label><select name="reportType"><option value="">Todos</option><option>ACTO SUBESTANDAR</option><option>CONDICION SUBESTANDAR</option></select></div><div class="field"><label>Supervisor</label><select name="supervisorUserId"><option value="">Todos</option>${state.catalogs.users.filter(x=>x.role==='SUPERVISOR').map(x=>`<option value="${x.id}">${escapeHtml(x.name)}</option>`).join('')}</select></div><div class="field"><label>&nbsp;</label><button class="btn primary">Aplicar filtros</button></div></form></section><div id="racDash"></div>`;async function load(){const qs=new URLSearchParams(formData($('#racFilters')));const d=await api(`/api/racs/dashboard?${qs}`);$('#racDash').innerHTML=`<div class="kpi-grid">${kpi('Total RACS',d.kpis.total,'Base filtrada','navy')}${kpi('Actos',d.kpis.acts,'Actos subestándar','coral')}${kpi('Condiciones',d.kpis.conditions,'Condiciones subestándar','teal')}${kpi('Alto potencial',d.kpis.high,'Prioridad','red')}${kpi('Pendientes',d.kpis.pending,'Requieren atención','amber')}${kpi('Vencidos',d.kpis.overdue,'Fuera del plazo','red')}${kpi('% cierre',`${d.kpis.closurePercent}%`,'Levantamiento','green')}</div><div class="grid-3"><section class="panel"><h3>Estado</h3>${bars(d.byStatus)}</section><section class="panel"><h3>Principales causas</h3>${bars(d.byCause)}</section><section class="panel"><h3>Supervisores</h3>${bars(d.bySupervisor)}</section></div><section class="panel"><h3>Riesgo por tipo</h3>${table(['Tipo','Riesgo','RACS'],d.byRisk.map(x=>`<tr><td>${escapeHtml(x.report_type)}</td><td><span class="tag ${x.risk_level==='ALTO'?'high':x.risk_level==='MEDIO'?'medium':'low'}">${x.risk_level}</span></td><td>${x.total}</td></tr>`))}</section>`;}$('#racFilters').onsubmit=e=>{e.preventDefault();load()};await load();}
 
@@ -130,7 +128,7 @@ export async function racOperationsPage(root){
       const preview=a.reconciliationPreview||{};
       const reconciliationPreview=`<div class="kpi-grid compact"><div class="kpi-card"><span>Nuevos</span><strong>${preview.willInsert||0}</strong><small>Se insertarán</small></div><div class="kpi-card"><span>Actualizaciones</span><strong>${preview.willUpdate||0}</strong><small>Coinciden con RACS activos</small></div><div class="kpi-card"><span>Recuperados</span><strong>${preview.willRestore||0}</strong><small>Desde depuración protegida</small></div><div class="kpi-card"><span>Estados preservados</span><strong>${preview.preservedStates||0}</strong><small>No retrocederán por el Excel</small></div></div>`;
       const periodControl=(a.periods||[]).length>1?`<div class="panel import-period-choice"><h4>El archivo contiene varios periodos</h4><div class="form-grid two"><div class="field"><label>Modo de importación</label><select id="importPeriodMode"><option value="ALL">Importar todos los periodos</option><option value="DOMINANT">Importar solo el mes dominante (${escapeHtml(a.dominantPeriod)})</option><option value="PERIOD">Importar un periodo específico</option></select></div><div class="field"><label>Periodo específico</label><select id="importSelectedPeriod" disabled>${periodOptions}</select></div></div></div>`:'';
-      $('#importResult').innerHTML=`<div class="alert ok">${a.validRows} RACS válidos · ${a.stableIds||0} con ID único estable · ${a.missingStableIds||0} sin ID único · Periodo dominante ${escapeHtml(a.dominantPeriod||'sin fecha')}.</div><div class="alert ok"><b>Excel conservado temporalmente.</b> Al confirmar, CAPSAN6 reutilizará el archivo ya analizado y no volverá a subirlo. La copia temporal vence a las ${a.uploadExpiresAt?new Date(a.uploadExpiresAt).toLocaleTimeString('es-PE',{hour:'2-digit',minute:'2-digit'}):'próximas 2 horas'}.</div>${reconciliationPreview}${warnings}${errors}${periodControl}<div class="actions"><button class="btn amber" id="commitImport">Confirmar e importar ${a.validRows} RACS a la base central</button></div><div id="commitImportStatus"></div>${table(['Código interno','ID único','N° origen','Fecha','Área','Lugar','Riesgo','Causa','Estado'],(a.records||[]).map(r=>`<tr><td>${escapeHtml(r.internalCode)}</td><td>${escapeHtml(r.externalId||'SIN ID')}</td><td>${escapeHtml(r.sourceReportNumber)}</td><td>${r.reportDate}</td><td>${escapeHtml(r.reportingArea)}</td><td>${escapeHtml(r.location)}</td><td>${escapeHtml(r.riskLevel)}</td><td>${escapeHtml(r.causeSubtype)}</td><td>${escapeHtml(r.status)}</td></tr>`))}`;
+      $('#importResult').innerHTML=`<div class="alert ok">${a.validRows} RACS válidos · ${a.stableIds||0} con ID único estable · ${a.missingStableIds||0} sin ID único · Periodo dominante ${escapeHtml(a.dominantPeriod||'sin fecha')}.</div><div class="alert ok"><b>Análisis completado.</b> Al confirmar, CAPSAN6 enviará el Excel nuevamente por partes y lo importará en la misma operación para evitar pérdidas de caché entre solicitudes. La copia temporal vence a las ${a.uploadExpiresAt?new Date(a.uploadExpiresAt).toLocaleTimeString('es-PE',{hour:'2-digit',minute:'2-digit'}):'próximas 2 horas'}.</div>${reconciliationPreview}${warnings}${errors}${periodControl}<div class="actions"><button class="btn amber" id="commitImport">Confirmar e importar ${a.validRows} RACS a la base central</button></div><div id="commitImportStatus"></div>${table(['Código interno','ID único','N° origen','Fecha','Área','Lugar','Riesgo','Causa','Estado'],(a.records||[]).map(r=>`<tr><td>${escapeHtml(r.internalCode)}</td><td>${escapeHtml(r.externalId||'SIN ID')}</td><td>${escapeHtml(r.sourceReportNumber)}</td><td>${r.reportDate}</td><td>${escapeHtml(r.reportingArea)}</td><td>${escapeHtml(r.location)}</td><td>${escapeHtml(r.riskLevel)}</td><td>${escapeHtml(r.causeSubtype)}</td><td>${escapeHtml(r.status)}</td></tr>`))}`;
       if($('#importPeriodMode'))$('#importPeriodMode').onchange=()=>{$('#importSelectedPeriod').disabled=$('#importPeriodMode').value!=='PERIOD';};
       const commitButton=$('#commitImport');
       let currentUploadToken=a.uploadToken;
@@ -151,23 +149,14 @@ export async function racOperationsPage(root){
         commitButton.disabled=true;
         commitButton.textContent='Importando y verificando PostgreSQL…';
         try{
-          let r;
-          try{
-            r=await importWithToken(currentUploadToken);
-          }catch(firstError){
-            const recoverable=Number(firstError.status)===410||/archivo analizado|copia temporal|no se pudo recuperar/i.test(firstError.message||'');
-            if(!recoverable)throw firstError;
-            $('#commitImportStatus').innerHTML='<div class="alert warn"><b>La copia temporal cambió de réplica.</b> CAPSAN6 está volviendo a cargar el mismo Excel automáticamente. No cierres esta pestaña.</div>';
-            const replacement=await uploadRacWorkbookInChunks(selectedFile,selectedUnitId,(percent,current,total)=>{
-              commitButton.textContent=`Recuperando archivo ${percent}%`;
-              $('#commitImportStatus').innerHTML=`<div class="alert warn"><b>Recuperando Excel automáticamente: ${percent}%</b><br>Parte ${current} de ${total}. No necesitas volver a seleccionarlo.</div>`;
-            });
-            commitButton.textContent='Reanalizando archivo recuperado…';
-            const refreshed=await api('/api/racs/import/analyze',{method:'POST',body:{uploadToken:replacement.uploadToken,businessUnitId:selectedUnitId}});
-            currentUploadToken=refreshed.uploadToken;
-            commitButton.textContent='Importando y verificando PostgreSQL…';
-            r=await importWithToken(currentUploadToken);
-          }
+          $('#commitImportStatus').innerHTML='<div class="alert ok"><b>Preparando importación definitiva.</b> CAPSAN6 enviará nuevamente el Excel por partes y lo procesará en la misma operación, sin depender de una copia temporal anterior.</div>';
+          const finalUpload=await uploadRacWorkbookInChunks(selectedFile,selectedUnitId,(percent,current,total)=>{
+            commitButton.textContent=`Preparando importación ${percent}%`;
+            $('#commitImportStatus').innerHTML=`<div class="alert ok"><b>Preparando importación definitiva: ${percent}%</b><br>Parte ${current} de ${total}. No cierres esta pestaña.</div>`;
+          });
+          currentUploadToken=finalUpload.uploadToken;
+          commitButton.textContent='Importando y verificando PostgreSQL…';
+          const r=await importWithToken(currentUploadToken);
           showImportSuccess(r);
         }catch(err){
           commitButton.disabled=false;
