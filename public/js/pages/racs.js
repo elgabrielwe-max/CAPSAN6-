@@ -49,6 +49,39 @@ async function hydrateEvidenceThumbnails(root,evidenceMap){
     button.onclick=()=>openRacEvidence(evidenceMap.get(Number(button.dataset.openEvidence)));
   });
 }
+
+const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+function arrayBufferToBase64(buffer){
+  const bytes=new Uint8Array(buffer);let binary='';const step=0x8000;
+  for(let offset=0;offset<bytes.length;offset+=step)binary+=String.fromCharCode(...bytes.subarray(offset,Math.min(offset+step,bytes.length)));
+  return btoa(binary);
+}
+async function retryChunkRequest(url,body,attempts=4){
+  let lastError;
+  for(let attempt=1;attempt<=attempts;attempt++){
+    try{return await api(url,{method:'POST',body});}
+    catch(error){lastError=error;if(attempt<attempts)await pause(700*attempt);}
+  }
+  throw lastError;
+}
+async function uploadRacWorkbookInChunks(file,businessUnitId,onProgress=()=>{}){
+  if(Number(file.size)>25*1024*1024)throw new Error('El archivo supera el tamaño máximo permitido de 25 MB.');
+  const initialized=await api('/api/racs/import/upload/init',{method:'POST',body:{
+    businessUnitId,fileName:file.name,mimeType:file.type||'application/octet-stream',size:file.size
+  }});
+  const chunkSize=Number(initialized.chunkSize);const totalChunks=Number(initialized.totalChunks);
+  for(let index=0;index<totalChunks;index++){
+    const start=index*chunkSize;const end=Math.min(start+chunkSize,file.size);
+    const data=arrayBufferToBase64(await file.slice(start,end).arrayBuffer());
+    await retryChunkRequest('/api/racs/import/upload/chunk',{
+      uploadToken:initialized.uploadToken,businessUnitId,index,data
+    });
+    onProgress(Math.round((index+1)*100/totalChunks),index+1,totalChunks);
+  }
+  return retryChunkRequest('/api/racs/import/upload/complete',{
+    uploadToken:initialized.uploadToken,businessUnitId
+  });
+}
 export async function racDashboardPage(root){root.innerHTML=`<div class="page-head"><div><h2>Dashboard principal RACS</h2><p>Vista compacta con filtros de unidad, fecha, estado, riesgo y Supervisor. Plazos: ALTO 48 h · MEDIO 3 días · BAJO 4 días.</p></div></div><section class="panel"><form id="racFilters" class="filter-grid"><div class="field"><label>Unidad</label><select name="businessUnitId">${unitOptions()}</select></div><div class="field"><label>Desde</label><input type="date" name="from"></div><div class="field"><label>Hasta</label><input type="date" name="to"></div><div class="field"><label>Estado</label><select name="status"><option value="">Todos</option>${state.catalogs.racStatuses.map(x=>`<option>${x}</option>`).join('')}</select></div><div class="field"><label>Riesgo</label><select name="risk"><option value="">Todos</option>${state.catalogs.riskLevels.map(x=>`<option>${x}</option>`).join('')}</select></div><div class="field"><label>Tipo</label><select name="reportType"><option value="">Todos</option><option>ACTO SUBESTANDAR</option><option>CONDICION SUBESTANDAR</option></select></div><div class="field"><label>Supervisor</label><select name="supervisorUserId"><option value="">Todos</option>${state.catalogs.users.filter(x=>x.role==='SUPERVISOR').map(x=>`<option value="${x.id}">${escapeHtml(x.name)}</option>`).join('')}</select></div><div class="field"><label>&nbsp;</label><button class="btn primary">Aplicar filtros</button></div></form></section><div id="racDash"></div>`;async function load(){const qs=new URLSearchParams(formData($('#racFilters')));const d=await api(`/api/racs/dashboard?${qs}`);$('#racDash').innerHTML=`<div class="kpi-grid">${kpi('Total RACS',d.kpis.total,'Base filtrada','navy')}${kpi('Actos',d.kpis.acts,'Actos subestándar','coral')}${kpi('Condiciones',d.kpis.conditions,'Condiciones subestándar','teal')}${kpi('Alto potencial',d.kpis.high,'Prioridad','red')}${kpi('Pendientes',d.kpis.pending,'Requieren atención','amber')}${kpi('Vencidos',d.kpis.overdue,'Fuera del plazo','red')}${kpi('% cierre',`${d.kpis.closurePercent}%`,'Levantamiento','green')}</div><div class="grid-3"><section class="panel"><h3>Estado</h3>${bars(d.byStatus)}</section><section class="panel"><h3>Principales causas</h3>${bars(d.byCause)}</section><section class="panel"><h3>Supervisores</h3>${bars(d.bySupervisor)}</section></div><section class="panel"><h3>Riesgo por tipo</h3>${table(['Tipo','Riesgo','RACS'],d.byRisk.map(x=>`<tr><td>${escapeHtml(x.report_type)}</td><td><span class="tag ${x.risk_level==='ALTO'?'high':x.risk_level==='MEDIO'?'medium':'low'}">${x.risk_level}</span></td><td>${x.total}</td></tr>`))}</section>`;}$('#racFilters').onsubmit=e=>{e.preventDefault();load()};await load();}
 
 export async function racOperationsPage(root){
@@ -70,7 +103,7 @@ export async function racOperationsPage(root){
   }
   async function importTab(){
   const box=$('#racOps');
-  box.innerHTML=`<section class="panel"><h3>Importador inteligente de RACS</h3><div class="panel-sub">Interpreta hojas, encabezados, fechas y causas. La conciliación conserva estados, evidencias, direccionamientos e historial aunque previamente se haya depurado la carga.</div><div class="alert ok"><b>Importación conciliada activa.</b> Usa siempre el ID ÚNICO ORIGEN del modelo oficial para que el mismo RAC se actualice y no vuelva a duplicarse.</div><div class="actions"><a class="btn ghost" href="/templates/MODELO_OFICIAL_IMPORTACION_RACS_CAPSAN6.xlsx" download>Descargar modelo oficial RACS</a></div><form id="racImportForm"><div class="form-grid two"><div class="field"><label>Unidad de negocio</label><select name="businessUnitId" required>${unitOptions()}</select></div><div class="field"><label>Archivo Excel</label><input type="file" name="file" accept=".xlsx,.xls" required></div></div><button class="btn primary" name="action" value="analyze">Analizar archivo</button></form><div id="importResult"></div></section>`;
+  box.innerHTML=`<section class="panel"><h3>Importador inteligente de RACS</h3><div class="panel-sub">Interpreta hojas, encabezados, fechas y causas. La conciliación conserva estados, evidencias, direccionamientos e historial aunque previamente se haya depurado la carga.</div><div class="alert ok"><b>Importación conciliada activa.</b> Usa siempre el ID ÚNICO ORIGEN del modelo oficial para que el mismo RAC se actualice y no vuelva a duplicarse.</div><div class="actions"><a class="btn ghost" href="/templates/MODELO_OFICIAL_IMPORTACION_RACS_CAPSAN6.xlsx" download>Descargar modelo oficial RACS</a></div><form id="racImportForm"><div class="form-grid two"><div class="field"><label>Unidad de negocio</label><select name="businessUnitId" required>${unitOptions()}</select></div><div class="field"><label>Archivo Excel</label><input type="file" name="file" accept=".xlsx,.xls" required></div></div><button class="btn primary" name="action" value="analyze">Analizar archivo</button></form><div id="uploadProgress"></div><div id="importResult"></div></section>`;
   const form=$('#racImportForm');
   form.onsubmit=async event=>{
     event.preventDefault();
@@ -80,12 +113,17 @@ export async function racOperationsPage(root){
     if(!selectedFile||!selectedUnitId)return toast('Selecciona la unidad y el archivo Excel','error');
     const analyzeButton=currentForm.querySelector('button[type="submit"],button[name="action"]');
     analyzeButton.disabled=true;
-    analyzeButton.textContent='Analizando…';
-    const fd=new FormData();
-    fd.append('file',selectedFile);
-    fd.append('businessUnitId',selectedUnitId);
+    analyzeButton.textContent='Preparando carga…';
+    const progressBox=$('#uploadProgress');
+    progressBox.innerHTML='<div class="alert ok">Preparando el Excel para una carga estable por partes…</div>';
     try{
-      const a=await api('/api/racs/import/analyze',{method:'POST',body:fd});
+      const uploaded=await uploadRacWorkbookInChunks(selectedFile,selectedUnitId,(percent,current,total)=>{
+        analyzeButton.textContent=`Subiendo ${percent}%`;
+        progressBox.innerHTML=`<div class="alert ok"><b>Subiendo Excel por partes: ${percent}%</b><br>Parte ${current} de ${total}. No cierres esta pestaña.</div>`;
+      });
+      analyzeButton.textContent='Analizando Excel…';
+      progressBox.innerHTML='<div class="alert ok"><b>Carga completada.</b> CAPSAN6 está analizando el contenido.</div>';
+      const a=await api('/api/racs/import/analyze',{method:'POST',body:{uploadToken:uploaded.uploadToken,businessUnitId:selectedUnitId}});
       const warnings=(a.warnings||[]).map(w=>`<div class="alert warn">${escapeHtml(w)}</div>`).join('');
       const errors=(a.errors||[]).slice(0,8).map(w=>`<div class="alert danger">${escapeHtml(w)}</div>`).join('');
       const periodOptions=(a.periods||[]).map(item=>`<option value="${item.period}">${escapeHtml(item.period)} · ${item.total} RACS</option>`).join('');
@@ -119,6 +157,7 @@ export async function racOperationsPage(root){
         }
       };
     }catch(err){
+      progressBox.innerHTML='';
       $('#importResult').innerHTML=errorBox(err);
     }finally{
       analyzeButton.disabled=false;

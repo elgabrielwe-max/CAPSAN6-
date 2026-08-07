@@ -37,8 +37,8 @@ test('el servidor amplía los tiempos para cargas lentas',()=>{
   assert.match(index,/headersTimeout=16\*60\*1000/);
 });
 
-test('versión corresponde a CAPSAN6 4.0.36',()=>{
+test('versión corresponde a CAPSAN6 4.0.37',()=>{
   const pkg=JSON.parse(read('package.json'));
-  assert.equal(pkg.version,'4.0.36');
-  assert.match(read('server/app.js'),/version:'4\.0\.36'/);
+  assert.equal(pkg.version,'4.0.37');
+  assert.match(read('server/app.js'),/version:'4\.0\.37'/);
 });

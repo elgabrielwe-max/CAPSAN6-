@@ -699,7 +699,7 @@ export async function initSchema() {
   await q(`INSERT INTO schema_migrations(version) VALUES('4.0.31') ON CONFLICT DO NOTHING`);
   await q(`INSERT INTO schema_migrations(version) VALUES('4.0.33') ON CONFLICT DO NOTHING`);
   await q(`INSERT INTO schema_migrations(version) VALUES('4.0.35') ON CONFLICT DO NOTHING`);
-  await q(`INSERT INTO schema_migrations(version) VALUES('4.0.36') ON CONFLICT DO NOTHING`);
+  await q(`INSERT INTO schema_migrations(version) VALUES('4.0.37') ON CONFLICT DO NOTHING`);
   await q(`INSERT INTO schema_migrations(version) VALUES('4.0.3') ON CONFLICT DO NOTHING`);
   await q(`INSERT INTO schema_migrations(version) VALUES('4.0.4') ON CONFLICT DO NOTHING`);
   await q(`INSERT INTO schema_migrations(version) VALUES('4.0.6') ON CONFLICT DO NOTHING`);

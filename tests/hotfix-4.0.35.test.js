@@ -47,7 +47,7 @@ test('interfaz incluye pestaña y filtros del apartado de evidencias',()=>{
   assert.match(page,/data-open-evidence/);
 });
 
-test('versión corresponde a CAPSAN6 4.0.36',()=>{
+test('versión corresponde a CAPSAN6 4.0.37',()=>{
   const pkg=JSON.parse(read('../package.json'));
-  assert.equal(pkg.version,'4.0.36');
+  assert.equal(pkg.version,'4.0.37');
 });

@@ -1,6 +1,16 @@
-# CAPSAN6 4.0.36 · Sistema Integral de Gestión SSOMA
+# CAPSAN6 4.0.37 · Sistema Integral de Gestión SSOMA
 
 
+
+
+## Corrección 4.0.37 · Carga fragmentada y reintentable de Excel
+
+- La importación RACS ya no depende de una sola solicitud `multipart/form-data`.
+- El navegador divide el Excel en partes de 512 KB y reintenta automáticamente cada parte.
+- Railway guarda las partes temporalmente en el volumen `/data` y reconstruye el archivo antes de analizarlo.
+- La pantalla muestra el porcentaje y la parte actual.
+- La finalización es idempotente: si se pierde la respuesta, el sistema reconoce el archivo ya completado.
+- Se mantiene el flujo de análisis, conciliación, recuperación de evidencias y confirmación mediante token.
 
 
 ## Corrección 4.0.36 · Cargas estables y Excel reutilizable

@@ -16,7 +16,7 @@ import { unitScope, parseFilters } from '../scope.js';
 import { config } from '../config.js';
 import { dueDateForRisk } from '../services/racDeadlines.js';
 import { buildRacFingerprints, findActiveRacMatch, findReconciliationMemory, rememberRacsBeforePurge, restoreReconciliationMemory, allocateUniqueRacReportCode, recoverHistoricalEvidence, listHistoricalEvidenceRecords } from '../services/racReconciliation.js';
-import { cacheUploadedFile, loadCachedFile, removeCachedFile } from '../services/uploadCache.js';
+import { cacheUploadedFile, loadCachedFile, removeCachedFile, beginChunkedUpload, saveChunkedUploadPart, completeChunkedUpload } from '../services/uploadCache.js';
 
 const upload=multer({storage:multer.memoryStorage(),limits:{fileSize:25*1024*1024}});
 export const racsRouter=Router();
@@ -247,13 +247,47 @@ racsRouter.post('/',requireCapability('rac:create'),async(req,res)=>{
   res.json(row);
 });
 
-racsRouter.post('/import/analyze',requireCapability('rac:import'),upload.single('file'),asyncRoute(async(req,res)=>{
-  if(!req.file)return res.status(400).json({error:'Selecciona un Excel'});
+
+racsRouter.post('/import/upload/init',requireCapability('rac:import'),asyncRoute(async(req,res)=>{
   const bu=await unit(pool,req.body.businessUnitId);
   if(!bu)return res.status(400).json({error:'Selecciona una unidad'});
   if(!assertUnitAccess(req.user,bu.id))return res.status(403).json({error:'Unidad fuera de tu alcance'});
-  const analysis=analyzeRacWorkbook(req.file.buffer,req.file.originalname,{businessUnitName:bu.name,unitCode:bu.code});
-  const cachedUpload=await cacheUploadedFile(req.file,{userId:req.user.id,businessUnitId:bu.id,purpose:'RAC_IMPORT'});
+  const uploadState=await beginChunkedUpload({
+    userId:req.user.id,businessUnitId:bu.id,purpose:'RAC_IMPORT',
+    originalName:req.body.fileName,mimeType:req.body.mimeType,size:req.body.size
+  });
+  res.json(uploadState);
+}));
+
+racsRouter.post('/import/upload/chunk',requireCapability('rac:import'),asyncRoute(async(req,res)=>{
+  const bu=await unit(pool,req.body.businessUnitId);
+  if(!bu)return res.status(400).json({error:'Selecciona una unidad'});
+  if(!assertUnitAccess(req.user,bu.id))return res.status(403).json({error:'Unidad fuera de tu alcance'});
+  const result=await saveChunkedUploadPart(req.body.uploadToken,{
+    userId:req.user.id,businessUnitId:bu.id,purpose:'RAC_IMPORT',index:req.body.index,data:req.body.data
+  });
+  res.json(result);
+}));
+
+racsRouter.post('/import/upload/complete',requireCapability('rac:import'),asyncRoute(async(req,res)=>{
+  const bu=await unit(pool,req.body.businessUnitId);
+  if(!bu)return res.status(400).json({error:'Selecciona una unidad'});
+  if(!assertUnitAccess(req.user,bu.id))return res.status(403).json({error:'Unidad fuera de tu alcance'});
+  const result=await completeChunkedUpload(req.body.uploadToken,{userId:req.user.id,businessUnitId:bu.id,purpose:'RAC_IMPORT'});
+  res.json(result);
+}));
+
+racsRouter.post('/import/analyze',requireCapability('rac:import'),upload.single('file'),asyncRoute(async(req,res)=>{
+  const bu=await unit(pool,req.body.businessUnitId);
+  if(!bu)return res.status(400).json({error:'Selecciona una unidad'});
+  if(!assertUnitAccess(req.user,bu.id))return res.status(403).json({error:'Unidad fuera de tu alcance'});
+  const uploadToken=clean(req.body.uploadToken);
+  const importFile=req.file||(uploadToken?await loadCachedFile(uploadToken,{userId:req.user.id,businessUnitId:bu.id,purpose:'RAC_IMPORT'}):null);
+  if(!importFile)return res.status(400).json({error:'Selecciona un Excel o completa la carga por partes'});
+  const analysis=analyzeRacWorkbook(importFile.buffer,importFile.originalname,{businessUnitName:bu.name,unitCode:bu.code});
+  const cachedUpload=req.file
+    ?await cacheUploadedFile(req.file,{userId:req.user.id,businessUnitId:bu.id,purpose:'RAC_IMPORT'})
+    :{token:uploadToken,expiresAt:importFile.expiresAt,originalName:importFile.originalname,size:importFile.size};
   let willUpdate=0,willRestore=0,willInsert=0,preservedStates=0;
   for(const record of analysis.records){
     const existing=await findActiveRacMatch(pool,record,bu.id);
