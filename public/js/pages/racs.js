@@ -133,7 +133,7 @@ export async function racOperationsPage(root){
       const commitButton=$('#commitImport');
       let currentUploadToken=a.uploadToken;
       const showImportSuccess=r=>{
-        $('#commitImportStatus').innerHTML=`<div class="alert ok"><b>Importación confirmada en la base central.</b><br>${r.inserted} nuevos · ${r.updated} actualizados · ${r.reconciled||0} recuperados desde depuración · ${r.restoredEvidence||0} evidencias restauradas · ${r.duplicatesMerged||0} duplicados históricos fusionados · ${r.preservedOperational||0} estados actuales preservados · ${r.verified} verificados en PostgreSQL.</div><div class="actions"><button class="btn primary" id="openCentralDashboard">Abrir Dashboard RACS</button><button class="btn ghost" id="openCentralList">Abrir listado para levantamiento</button></div>`;
+        $('#commitImportStatus').innerHTML=`<div class="alert ok"><b>Importación confirmada en la base central.</b><br>${r.inserted} nuevos · ${r.updated} actualizados · ${r.reconciled||0} recuperados desde depuración · ${r.duplicatesMerged||0} duplicados históricos fusionados · ${r.preservedOperational||0} estados actuales preservados · ${r.verified} verificados en PostgreSQL.</div><div class="actions"><button class="btn primary" id="openCentralDashboard">Abrir Dashboard RACS</button><button class="btn ghost" id="openCentralList">Abrir listado para levantamiento</button></div>`;
         commitButton.textContent='Importación completada';
         toast(`${r.verified} RACS verificados en la base central`);
         $('#openCentralDashboard').onclick=()=>document.querySelector('[data-route="racDashboard"]')?.click();

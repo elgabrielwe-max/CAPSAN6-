@@ -443,7 +443,7 @@ racsRouter.post('/import',requireCapability('rac:import'),upload.single('file'),
 
       const memoryRows=await findReconciliationMemory(client,r,bu.id);
       if(memoryRows.length){
-        const restored=await restoreReconciliationMemory(client,racId,memoryRows,req.user.id);
+        const restored=await restoreReconciliationMemory(client,racId,memoryRows,req.user.id,{restoreEvidence:false});
         if(restored.restored){reconciled++;restoredEvidence+=restored.evidence;duplicatesMerged+=restored.duplicatesMerged;preserveAssignments=true;}
       }
 
@@ -456,12 +456,6 @@ racsRouter.post('/import',requireCapability('rac:import'),upload.single('file'),
       if(touchedRacIds.has(normalizedRacId))sourceRowsConsolidated++;
       touchedRacIds.add(normalizedRacId);
     }
-
-    const sortedImportDates=importRecords.map(row=>row.reportDate).filter(Boolean).sort();
-    const historicalEvidenceRecovery=await recoverHistoricalEvidence(client,{
-      businessUnitIds:[Number(bu.id)],from:sortedImportDates[0]||null,to:sortedImportDates.at(-1)||null,actorId:req.user.id,dryRun:false
-    });
-    restoredEvidence+=Number(historicalEvidenceRecovery.inserted||0)+Number(historicalEvidenceRecovery.moved||0);
 
     const touchedIds=[...touchedRacIds];
     const expectedUnique=touchedIds.length;
@@ -489,7 +483,6 @@ racsRouter.post('/import',requireCapability('rac:import'),upload.single('file'),
     const periodTotal=periodForTotal?Number((await client.query(`SELECT COUNT(*)::int total FROM racs WHERE business_unit_id=$1::int AND TO_CHAR(report_date,'YYYY-MM')=$2::text`,[bu.id,periodForTotal])).rows[0].total):centralTotal;
     return{
       batchId:batch.id,inserted,updated,reconciled,restoredEvidence,duplicatesMerged,preservedOperational,
-      historicalEvidenceRecovery,
       processedRows:importRecords.length,uniqueAffected:expectedUnique,sourceRowsConsolidated,reportCodesRegenerated,verified,centralTotal,periodTotal,
       rejected:analysis.errors.length,period:detectedPeriod,importedPeriods,periodMode,warnings:analysis.warnings
     };

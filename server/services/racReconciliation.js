@@ -491,7 +491,7 @@ export async function rememberRacsBeforePurge(client,selected,purgeReference){
 
 const safeJson=value=>value&&typeof value==='object'?value:{};
 
-export async function restoreReconciliationMemory(client,racId,memoryRows,actorId){
+export async function restoreReconciliationMemory(client,racId,memoryRows,actorId,{restoreEvidence=true}={}){
   if(!memoryRows.length)return{restored:false,evidence:0,oldIds:[]};
   const bestRow=chooseBestReconciliationSnapshot(memoryRows);
   const best=safeJson(bestRow.rac_snapshot);
@@ -512,39 +512,41 @@ export async function restoreReconciliationMemory(client,racId,memoryRows,actorI
   ]);
 
   const evidenceMap=new Map();
-  for(const row of memoryRows)for(const evidence of evidenceRows(row)){
-    const key=[evidence.stored_name,evidence.evidence_type,evidence.uploaded_at].join('|');
-    if(!evidenceMap.has(key))evidenceMap.set(key,evidence);
-  }
-  for(const e of evidenceMap.values()){
-    await client.query(`WITH incoming AS (
-        SELECT
-          $1::integer AS rac_id,
-          $2::varchar(30) AS evidence_type,
-          $3::text AS comment,
-          $4::text AS original_name,
-          $5::text AS stored_name,
-          $6::text AS mime_type,
-          $7::bigint AS size_bytes,
-          $8::text AS drive_file_id,
-          $9::text AS drive_web_link,
-          $10::text AS drive_folder_path,
-          $11::varchar(30) AS drive_status,
-          $12::integer AS uploaded_by,
-          $13::timestamptz AS uploaded_at
-      )
-      INSERT INTO rac_evidence(rac_id,evidence_type,comment,original_name,stored_name,mime_type,size_bytes,drive_file_id,drive_web_link,drive_folder_path,drive_status,uploaded_by,uploaded_at)
-      SELECT i.rac_id,i.evidence_type,i.comment,i.original_name,i.stored_name,i.mime_type,i.size_bytes,i.drive_file_id,i.drive_web_link,i.drive_folder_path,i.drive_status,i.uploaded_by,i.uploaded_at
-      FROM incoming i
-      WHERE NOT EXISTS(
-        SELECT 1
-        FROM rac_evidence existing
-        WHERE existing.rac_id=i.rac_id
-          AND existing.stored_name=i.stored_name
-          AND existing.evidence_type::text=i.evidence_type::text
-      )`,[
-      racId,e.evidence_type||'SEGUIMIENTO',e.comment||null,e.original_name,e.stored_name,e.mime_type||null,e.size_bytes||null,e.drive_file_id||null,e.drive_web_link||null,e.drive_folder_path||null,e.drive_status||'LOCAL',e.uploaded_by||null,e.uploaded_at||new Date()
-    ]);
+  if(restoreEvidence){
+    for(const row of memoryRows)for(const evidence of evidenceRows(row)){
+      const key=[evidence.stored_name,evidence.evidence_type,evidence.uploaded_at].join('|');
+      if(!evidenceMap.has(key))evidenceMap.set(key,evidence);
+    }
+    for(const e of evidenceMap.values()){
+      await client.query(`WITH incoming AS (
+          SELECT
+            $1::integer AS rac_id,
+            $2::varchar(30) AS evidence_type,
+            $3::text AS comment,
+            $4::text AS original_name,
+            $5::text AS stored_name,
+            $6::text AS mime_type,
+            $7::bigint AS size_bytes,
+            $8::text AS drive_file_id,
+            $9::text AS drive_web_link,
+            $10::text AS drive_folder_path,
+            $11::varchar(30) AS drive_status,
+            $12::integer AS uploaded_by,
+            $13::timestamptz AS uploaded_at
+        )
+        INSERT INTO rac_evidence(rac_id,evidence_type,comment,original_name,stored_name,mime_type,size_bytes,drive_file_id,drive_web_link,drive_folder_path,drive_status,uploaded_by,uploaded_at)
+        SELECT i.rac_id,i.evidence_type,i.comment,i.original_name,i.stored_name,i.mime_type,i.size_bytes,i.drive_file_id,i.drive_web_link,i.drive_folder_path,i.drive_status,i.uploaded_by,i.uploaded_at
+        FROM incoming i
+        WHERE NOT EXISTS(
+          SELECT 1
+          FROM rac_evidence existing
+          WHERE existing.rac_id=i.rac_id
+            AND existing.stored_name=i.stored_name
+            AND existing.evidence_type::text=i.evidence_type::text
+        )`,[
+        racId,e.evidence_type||'SEGUIMIENTO',e.comment||null,e.original_name,e.stored_name,e.mime_type||null,e.size_bytes||null,e.drive_file_id||null,e.drive_web_link||null,e.drive_folder_path||null,e.drive_status||'LOCAL',e.uploaded_by||null,e.uploaded_at||new Date()
+      ]);
+    }
   }
 
   const assignmentUsers=new Set();
@@ -556,9 +558,9 @@ export async function restoreReconciliationMemory(client,racId,memoryRows,actorI
 
   if(oldIds.length){
     await client.query(`UPDATE audit_log SET entity_id=$1::text,details=COALESCE(details,'{}'::jsonb)||jsonb_build_object('reconciled_from_rac_id',entity_id) WHERE entity_type='RAC' AND entity_id=ANY($2::text[])`,[String(racId),oldIds.map(String)]);
-    await client.query(`UPDATE file_assets SET entity_id=$1::text WHERE entity_type='RAC' AND entity_id=ANY($2::text[])`,[String(racId),oldIds.map(String)]);
+    if(restoreEvidence)await client.query(`UPDATE file_assets SET entity_id=$1::text WHERE entity_type='RAC' AND entity_id=ANY($2::text[])`,[String(racId),oldIds.map(String)]);
   }
   await client.query(`UPDATE rac_reconciliation_memory SET restored_at=NOW(),restored_rac_id=$1 WHERE id=ANY($2::bigint[])`,[racId,memoryRows.map(row=>Number(row.id))]);
-  await client.query(`INSERT INTO audit_log(user_id,actor_user_id,action,entity_type,entity_id,details) VALUES($1,$1,'RECONCILE_RAC','RAC',$2,$3::jsonb)`,[actorId,String(racId),JSON.stringify({oldRacIds:oldIds,evidenceRestored:evidenceMap.size,duplicatesMerged:Math.max(0,oldIds.length-1)})]);
+  await client.query(`INSERT INTO audit_log(user_id,actor_user_id,action,entity_type,entity_id,details) VALUES($1,$1,'RECONCILE_RAC','RAC',$2,$3::jsonb)`,[actorId,String(racId),JSON.stringify({oldRacIds:oldIds,evidenceRestored:restoreEvidence?evidenceMap.size:0,evidenceImportDisabled:!restoreEvidence,duplicatesMerged:Math.max(0,oldIds.length-1)})]);
   return{restored:true,evidence:evidenceMap.size,oldIds,duplicatesMerged:Math.max(0,oldIds.length-1)};
 }
