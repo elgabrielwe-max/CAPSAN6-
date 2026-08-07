@@ -55,9 +55,9 @@ test('4.0.26 permite crear categorías de causa personalizadas',()=>{
 });
 
 test('4.0.26 queda versionado y renueva recursos web',()=>{
-  assert.match(read('server/index.js'),/CAPSAN6 4\.0\.37 ejecutándose/);
+  assert.match(read('server/index.js'),/CAPSAN6 4\.0\.38 ejecutándose/);
   assert.match(read('server/app.js'),/4\.0\.26-LISTADO-DIRECCIONADO-EDICION-RACS-CATALOGO-TIPOS-DE-CAUSA/);
-  assert.match(read('package.json'),/"version": "4\.0\.37"/);
-  assert.match(read('public/index.html'),/v=4035/);
-  assert.match(read('public/js/app.js'),/racs\.js\?v=4035/);
+  assert.match(read('package.json'),/"version": "4\.0\.38"/);
+  assert.match(read('public/index.html'),/app\.js\?v=4038/);
+  assert.match(read('public/js/app.js'),/racs\.js\?v=4038/);
 });

@@ -1,0 +1,21 @@
+CAPSAN6 4.0.38 - HOTFIX DEFINITIVO DEL ARCHIVO ANALIZADO
+
+PROBLEMA CORREGIDO
+El Excel podía analizarse correctamente, pero al confirmar Railway devolvía HTTP 410:
+"El archivo analizado ya no está disponible".
+
+CAMBIO PRINCIPAL
+- El análisis crea una copia estable nueva en /data/uploads/.import-cache.
+- La copia dura 6 horas y renueva su vigencia al utilizarla.
+- Si Railway cambia de réplica o pierde la referencia, CAPSAN6 vuelve a cargar,
+  analizar e importar el mismo Excel automáticamente sin pedir que se seleccione otra vez.
+- El archivo temporal se elimina solamente cuando la importación termina con éxito.
+
+ACTUALIZACION
+1. Suba el contenido interno del parche a la raíz del repositorio.
+2. Confirme el commit.
+3. Espere el despliegue de Railway.
+4. Verifique: CAPSAN6 4.0.38 ejecutándose en puerto 8080.
+5. Presione Ctrl + F5 antes de volver a probar.
+
+NO BORRE PostgreSQL, el volumen /data, RACS ni evidencias.

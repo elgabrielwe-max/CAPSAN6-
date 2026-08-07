@@ -3,7 +3,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { config } from '../config.js';
 
-const CACHE_TTL_MS = 2 * 60 * 60 * 1000;
+const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 const MAX_IMPORT_FILE_SIZE = 25 * 1024 * 1024;
 const DEFAULT_CHUNK_SIZE = 512 * 1024;
 const tokenPattern = /^[a-f0-9]{48}$/i;
@@ -17,6 +17,7 @@ const filePathFor = (token, ext = '.bin') => path.join(cacheDir(), `${token}${ex
 const metaPathFor = token => path.join(cacheDir(), `${token}.json`);
 const chunkMetaPathFor = token => path.join(cacheDir(), `${token}.upload.json`);
 const chunkPartPathFor = token => path.join(cacheDir(), `${token}.part`);
+const sha256 = buffer => crypto.createHash('sha256').update(buffer).digest('hex');
 
 async function ensureCacheDir() {
   await fs.mkdir(cacheDir(), { recursive: true });
@@ -133,10 +134,11 @@ export async function completeChunkedUpload(token, { userId, businessUnitId, pur
   await fs.truncate(partPath, Number(meta.size));
   const finalPath = filePathFor(normalized, meta.ext);
   await fs.rename(partPath, finalPath);
+  const finalBuffer = await fs.readFile(finalPath);
   const finalMeta = {
     token: normalized, userId: Number(meta.userId), businessUnitId: Number(meta.businessUnitId), purpose: meta.purpose,
     originalName: meta.originalName, mimeType: meta.mimeType, size: Number(meta.size), ext: meta.ext,
-    createdAt: Number(meta.createdAt), expiresAt: Date.now() + CACHE_TTL_MS,
+    checksum: sha256(finalBuffer), createdAt: Number(meta.createdAt), expiresAt: Date.now() + CACHE_TTL_MS,
   };
   await writeJsonAtomic(metaPathFor(normalized), finalMeta);
   await fs.rm(chunkMetaPathFor(normalized), { force: true });
@@ -149,6 +151,7 @@ export async function cacheUploadedFile(file, { userId, businessUnitId, purpose 
   const token = crypto.randomBytes(24).toString('hex');
   const ext = safeExt(file.originalname);
   const createdAt = Date.now();
+  const buffer = Buffer.isBuffer(file.buffer) ? file.buffer : Buffer.from(file.buffer);
   const meta = {
     token,
     userId: Number(userId),
@@ -156,13 +159,14 @@ export async function cacheUploadedFile(file, { userId, businessUnitId, purpose 
     purpose,
     originalName: String(file.originalname || 'archivo.xlsx'),
     mimeType: String(file.mimetype || 'application/octet-stream'),
-    size: Number(file.size || file.buffer.length || 0),
+    size: Number(file.size || buffer.length || 0),
     ext,
+    checksum: sha256(buffer),
     createdAt,
     expiresAt: createdAt + CACHE_TTL_MS,
   };
   await Promise.all([
-    fs.writeFile(filePathFor(token, ext), file.buffer),
+    fs.writeFile(filePathFor(token, ext), buffer),
     writeJsonAtomic(metaPathFor(token), meta),
   ]);
   return { token, expiresAt: new Date(meta.expiresAt).toISOString(), originalName: meta.originalName, size: meta.size };
@@ -174,7 +178,7 @@ export async function loadCachedFile(token, { userId, businessUnitId, purpose = 
   try {
     meta = JSON.parse(await fs.readFile(metaPathFor(normalized), 'utf8'));
   } catch {
-    throw Object.assign(new Error('El archivo analizado ya no está disponible. Vuelve a analizarlo.'), { status: 410 });
+    throw Object.assign(new Error('El archivo analizado ya no está disponible. CAPSAN6 volverá a cargarlo automáticamente.'), { status: 410, recoverableUpload: true });
   }
   assertOwner(meta, { userId, businessUnitId, purpose });
   const filePath = filePathFor(normalized, meta.ext);
@@ -182,8 +186,13 @@ export async function loadCachedFile(token, { userId, businessUnitId, purpose = 
   try {
     buffer = await fs.readFile(filePath);
   } catch {
-    throw Object.assign(new Error('No se pudo recuperar el Excel analizado. Vuelve a seleccionarlo.'), { status: 410 });
+    throw Object.assign(new Error('No se pudo recuperar el Excel analizado. Vuelve a seleccionarlo.'), { status: 410, recoverableUpload: true });
   }
+  if (Number(meta.size || 0) !== buffer.length || (meta.checksum && meta.checksum !== sha256(buffer))) {
+    throw Object.assign(new Error('La copia temporal del Excel está incompleta o dañada. CAPSAN6 volverá a cargar el archivo.'), { status: 410, recoverableUpload: true });
+  }
+  meta.expiresAt = Date.now() + CACHE_TTL_MS;
+  await writeJsonAtomic(metaPathFor(normalized), meta);
   return {
     buffer,
     originalname: meta.originalName,

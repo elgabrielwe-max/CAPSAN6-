@@ -19,7 +19,12 @@ export async function api(url,options={}){
   }
   const type=response.headers.get('content-type')||'';
   const data=type.includes('application/json')?await response.json():await response.text();
-  if(!response.ok)throw new Error(data?.error||data||`Error ${response.status}`);
+  if(!response.ok){
+    const error=new Error(data?.error||data||`Error ${response.status}`);
+    error.status=response.status;
+    error.payload=data;
+    throw error;
+  }
   return data;
 }
 async function fileResponse(url){const response=await fetch(url,{headers:session.token?{authorization:`Bearer ${session.token}`}:{}});if(!response.ok){let msg='No se pudo obtener el archivo';try{msg=(await response.json()).error||msg;}catch{}throw new Error(msg);}return response;}

@@ -285,9 +285,10 @@ racsRouter.post('/import/analyze',requireCapability('rac:import'),upload.single(
   const importFile=req.file||(uploadToken?await loadCachedFile(uploadToken,{userId:req.user.id,businessUnitId:bu.id,purpose:'RAC_IMPORT'}):null);
   if(!importFile)return res.status(400).json({error:'Selecciona un Excel o completa la carga por partes'});
   const analysis=analyzeRacWorkbook(importFile.buffer,importFile.originalname,{businessUnitName:bu.name,unitCode:bu.code});
-  const cachedUpload=req.file
-    ?await cacheUploadedFile(req.file,{userId:req.user.id,businessUnitId:bu.id,purpose:'RAC_IMPORT'})
-    :{token:uploadToken,expiresAt:importFile.expiresAt,originalName:importFile.originalname,size:importFile.size};
+  // Genera una copia nueva y estable después del análisis. No reutiliza el token de ensamblado,
+  // porque una rotación de réplica de Railway puede invalidar esa referencia entre Analizar y Confirmar.
+  const cachedUpload=await cacheUploadedFile(importFile,{userId:req.user.id,businessUnitId:bu.id,purpose:'RAC_IMPORT'});
+  if(uploadToken&&uploadToken!==cachedUpload.token)await removeCachedFile(uploadToken).catch(()=>{});
   let willUpdate=0,willRestore=0,willInsert=0,preservedStates=0;
   for(const record of analysis.records){
     const existing=await findActiveRacMatch(pool,record,bu.id);

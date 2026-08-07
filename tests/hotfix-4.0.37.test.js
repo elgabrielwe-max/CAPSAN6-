@@ -4,7 +4,7 @@ import fs from 'node:fs';
 
 const read=file=>fs.readFileSync(new URL(`../${file}`,import.meta.url),'utf8');
 
-test('CAPSAN6 4.0.37 carga el Excel RACS por partes reintentables',()=>{
+test('CAPSAN6 4.0.38 carga el Excel RACS por partes reintentables',()=>{
   const server=read('server/modules/racs.js');
   const service=read('server/services/uploadCache.js');
   const client=read('public/js/pages/racs.js');
@@ -27,9 +27,9 @@ test('la finalización fragmentada es idempotente y queda ligada al usuario y un
   assert.match(service,/MAX_IMPORT_FILE_SIZE = 25 \* 1024 \* 1024/);
 });
 
-test('versión corresponde a CAPSAN6 4.0.37',()=>{
+test('versión corresponde a CAPSAN6 4.0.38',()=>{
   const pkg=JSON.parse(read('package.json'));
-  assert.equal(pkg.version,'4.0.37');
-  assert.match(read('server/app.js'),/version:'4\.0\.37'/);
-  assert.match(read('server/index.js'),/CAPSAN6 4\.0\.37 ejecutándose/);
+  assert.equal(pkg.version,'4.0.38');
+  assert.match(read('server/app.js'),/version:'4\.0\.38'/);
+  assert.match(read('server/index.js'),/CAPSAN6 4\.0\.38 ejecutándose/);
 });

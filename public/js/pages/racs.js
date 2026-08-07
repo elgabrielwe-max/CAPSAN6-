@@ -133,22 +133,42 @@ export async function racOperationsPage(root){
       $('#importResult').innerHTML=`<div class="alert ok">${a.validRows} RACS válidos · ${a.stableIds||0} con ID único estable · ${a.missingStableIds||0} sin ID único · Periodo dominante ${escapeHtml(a.dominantPeriod||'sin fecha')}.</div><div class="alert ok"><b>Excel conservado temporalmente.</b> Al confirmar, CAPSAN6 reutilizará el archivo ya analizado y no volverá a subirlo. La copia temporal vence a las ${a.uploadExpiresAt?new Date(a.uploadExpiresAt).toLocaleTimeString('es-PE',{hour:'2-digit',minute:'2-digit'}):'próximas 2 horas'}.</div>${reconciliationPreview}${warnings}${errors}${periodControl}<div class="actions"><button class="btn amber" id="commitImport">Confirmar e importar ${a.validRows} RACS a la base central</button></div><div id="commitImportStatus"></div>${table(['Código interno','ID único','N° origen','Fecha','Área','Lugar','Riesgo','Causa','Estado'],(a.records||[]).map(r=>`<tr><td>${escapeHtml(r.internalCode)}</td><td>${escapeHtml(r.externalId||'SIN ID')}</td><td>${escapeHtml(r.sourceReportNumber)}</td><td>${r.reportDate}</td><td>${escapeHtml(r.reportingArea)}</td><td>${escapeHtml(r.location)}</td><td>${escapeHtml(r.riskLevel)}</td><td>${escapeHtml(r.causeSubtype)}</td><td>${escapeHtml(r.status)}</td></tr>`))}`;
       if($('#importPeriodMode'))$('#importPeriodMode').onchange=()=>{$('#importSelectedPeriod').disabled=$('#importPeriodMode').value!=='PERIOD';};
       const commitButton=$('#commitImport');
+      let currentUploadToken=a.uploadToken;
+      const showImportSuccess=r=>{
+        $('#commitImportStatus').innerHTML=`<div class="alert ok"><b>Importación confirmada en la base central.</b><br>${r.inserted} nuevos · ${r.updated} actualizados · ${r.reconciled||0} recuperados desde depuración · ${r.restoredEvidence||0} evidencias restauradas · ${r.duplicatesMerged||0} duplicados históricos fusionados · ${r.preservedOperational||0} estados actuales preservados · ${r.verified} verificados en PostgreSQL.</div><div class="actions"><button class="btn primary" id="openCentralDashboard">Abrir Dashboard RACS</button><button class="btn ghost" id="openCentralList">Abrir listado para levantamiento</button></div>`;
+        commitButton.textContent='Importación completada';
+        toast(`${r.verified} RACS verificados en la base central`);
+        $('#openCentralDashboard').onclick=()=>document.querySelector('[data-route="racDashboard"]')?.click();
+        $('#openCentralList').onclick=()=>{document.querySelector('[data-route="racOperations"]')?.click();setTimeout(()=>document.querySelector('[data-tab="follow"]')?.click(),50);};
+      };
+      const importWithToken=token=>api('/api/racs/import',{method:'POST',body:{
+        uploadToken:token,
+        businessUnitId:selectedUnitId,
+        periodMode:$('#importPeriodMode')?.value||'ALL',
+        selectedPeriod:$('#importSelectedPeriod')?.value||''
+      }});
       commitButton.onclick=async()=>{
         commitButton.disabled=true;
         commitButton.textContent='Importando y verificando PostgreSQL…';
-        const importPayload={
-          uploadToken:a.uploadToken,
-          businessUnitId:selectedUnitId,
-          periodMode:$('#importPeriodMode')?.value||'ALL',
-          selectedPeriod:$('#importSelectedPeriod')?.value||''
-        };
         try{
-          const r=await api('/api/racs/import',{method:'POST',body:importPayload});
-          $('#commitImportStatus').innerHTML=`<div class="alert ok"><b>Importación confirmada en la base central.</b><br>${r.inserted} nuevos · ${r.updated} actualizados · ${r.reconciled||0} recuperados desde depuración · ${r.restoredEvidence||0} evidencias restauradas · ${r.duplicatesMerged||0} duplicados históricos fusionados · ${r.preservedOperational||0} estados actuales preservados · ${r.verified} verificados en PostgreSQL.</div><div class="actions"><button class="btn primary" id="openCentralDashboard">Abrir Dashboard RACS</button><button class="btn ghost" id="openCentralList">Abrir listado para levantamiento</button></div>`;
-          commitButton.textContent='Importación completada';
-          toast(`${r.verified} RACS verificados en la base central`);
-          $('#openCentralDashboard').onclick=()=>document.querySelector('[data-route="racDashboard"]')?.click();
-          $('#openCentralList').onclick=()=>{document.querySelector('[data-route="racOperations"]')?.click();setTimeout(()=>document.querySelector('[data-tab="follow"]')?.click(),50);};
+          let r;
+          try{
+            r=await importWithToken(currentUploadToken);
+          }catch(firstError){
+            const recoverable=Number(firstError.status)===410||/archivo analizado|copia temporal|no se pudo recuperar/i.test(firstError.message||'');
+            if(!recoverable)throw firstError;
+            $('#commitImportStatus').innerHTML='<div class="alert warn"><b>La copia temporal cambió de réplica.</b> CAPSAN6 está volviendo a cargar el mismo Excel automáticamente. No cierres esta pestaña.</div>';
+            const replacement=await uploadRacWorkbookInChunks(selectedFile,selectedUnitId,(percent,current,total)=>{
+              commitButton.textContent=`Recuperando archivo ${percent}%`;
+              $('#commitImportStatus').innerHTML=`<div class="alert warn"><b>Recuperando Excel automáticamente: ${percent}%</b><br>Parte ${current} de ${total}. No necesitas volver a seleccionarlo.</div>`;
+            });
+            commitButton.textContent='Reanalizando archivo recuperado…';
+            const refreshed=await api('/api/racs/import/analyze',{method:'POST',body:{uploadToken:replacement.uploadToken,businessUnitId:selectedUnitId}});
+            currentUploadToken=refreshed.uploadToken;
+            commitButton.textContent='Importando y verificando PostgreSQL…';
+            r=await importWithToken(currentUploadToken);
+          }
+          showImportSuccess(r);
         }catch(err){
           commitButton.disabled=false;
           commitButton.textContent=`Confirmar e importar ${a.validRows} RACS a la base central`;

@@ -1,7 +1,13 @@
-# CAPSAN6 4.0.37 · Sistema Integral de Gestión SSOMA
+# CAPSAN6 4.0.38 · Sistema Integral de Gestión SSOMA
 
+## Corrección 4.0.38 · Archivo analizado persistente y autorrecuperable
 
-
+- Después de analizar, CAPSAN6 crea un token nuevo separado del token usado para ensamblar las partes.
+- La copia estable queda en `/data/uploads/.import-cache` durante seis horas y su vencimiento se renueva al utilizarla.
+- El sistema valida tamaño y huella SHA-256 antes de importar.
+- Si Railway cambia de réplica y devuelve HTTP 410, el navegador vuelve a cargar, analizar e importar el mismo Excel automáticamente.
+- El usuario no necesita seleccionar el archivo otra vez ni repetir manualmente el proceso.
+- La copia temporal solo se elimina después de una importación exitosa.
 
 ## Corrección 4.0.37 · Carga fragmentada y reintentable de Excel
 

@@ -13,7 +13,7 @@ async function start(){
   await initSchema();
   await ensureStorage();
   await cleanupExpiredUploadCache().catch(error=>console.warn('No se pudo limpiar la caché temporal de importación:',error.message));
-  const server=app.listen(config.port,()=>console.log(`CAPSAN6 4.0.37 ejecutándose en puerto ${config.port}`));
+  const server=app.listen(config.port,()=>console.log(`CAPSAN6 4.0.38 ejecutándose en puerto ${config.port}`));
   // Evita que Node cierre cargas multipart lentas antes de que Railway termine de recibirlas.
   server.requestTimeout=15*60*1000;
   server.headersTimeout=16*60*1000;
