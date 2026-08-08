@@ -1,0 +1,10 @@
+CAPSAN6 4.0.41
+
+NUEVA INTEGRACIÓN:
+X. ASPECTOS AMBIENTALES
+
+Incluye 49 subcausas ambientales en el catálogo institucional RACS.
+Se cargan automáticamente en PostgreSQL al iniciar el sistema y quedan disponibles en registro, edición/direccionamiento e importación por coincidencia normalizada.
+
+IMPORTANTE:
+Esta actualización NO modifica ni reasigna evidencias. El flujo de importación de Excel continúa separado de las evidencias conforme a 4.0.40.

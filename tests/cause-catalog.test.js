@@ -4,8 +4,8 @@ import fs from 'node:fs';
 import { RAC_CAUSE_CATALOG, classifyCauseFromCatalog } from '../server/racCauseCatalog.js';
 
 test('restaura las causas institucionales y la categoría de stock',()=>{
-  assert.equal(RAC_CAUSE_CATALOG.length,9);
-  assert.deepEqual(RAC_CAUSE_CATALOG.map(x=>x.code),['I','II','III','IV','V','VI','VII','VIII','IX']);
+  assert.equal(RAC_CAUSE_CATALOG.length,10);
+  assert.deepEqual(RAC_CAUSE_CATALOG.map(x=>x.code),['I','II','III','IV','V','VI','VII','VIII','IX','X']);
   assert.ok(RAC_CAUSE_CATALOG.find(x=>x.code==='I').subtypes.includes('ROCAS SUELTAS / FALTA DE SOSTENIMIENTO'));
   assert.ok(RAC_CAUSE_CATALOG.find(x=>x.code==='VII').subtypes.includes('NO USO DE EPP'));
   assert.ok(RAC_CAUSE_CATALOG.find(x=>x.code==='VI').subtypes.includes('MANEJO DE RESIDUOS PELIGROSOS O NO PELIGROSOS'));

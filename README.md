@@ -1,6 +1,10 @@
-# CAPSAN6 4.0.38 · Sistema Integral de Gestión SSOMA
+# CAPSAN6 4.0.41
 
-## Corrección 4.0.38 · Archivo analizado persistente y autorrecuperable
+Integra el nuevo tipo de causa **X. ASPECTOS AMBIENTALES** con 49 subcausas del Anexo IV, disponible en registro, edición/direccionamiento e importación RACS.
+
+# CAPSAN6 4.0.39 · Sistema Integral de Gestión SSOMA
+
+## Corrección 4.0.39 · Archivo analizado persistente y autorrecuperable
 
 - Después de analizar, CAPSAN6 crea un token nuevo separado del token usado para ensamblar las partes.
 - La copia estable queda en `/data/uploads/.import-cache` durante seis horas y su vencimiento se renueva al utilizarla.
